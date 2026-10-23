@@ -233,7 +233,7 @@ To use **Real Mouse (OS)** input mode, macOS requires Accessibility permissions 
 
 ### 5. Chess.com DOM Layout Changed
 - **Location**: All DOM selectors and board geometry calculations reside in:
-  [`src/chess_autoplayer/board/reader.js`](file:///Users/nersibayat/Desktop/Programing/New%20-%20Claude%202026/chess-autoplayer/src/chess_autoplayer/board/reader.js)
+  [`src/chess_autoplayer/board/reader.js`](src/chess_autoplayer/board/reader.js)
   If chess.com updates class names, update the board query selectors (`wc-chess-board`, `chess-board`, `#board-layout-player-bottom`) in that file.
 
 ---
