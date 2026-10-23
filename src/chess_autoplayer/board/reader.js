@@ -314,22 +314,67 @@
     }
   }
 
-  // Promotion picker detection
+  // Promotion picker detection and options
   let promotionOpen = false;
-  const promoSelectors = [
-    '.promotion-window',
-    '.promotion-menu',
-    'div.promotion-piece',
-    '.promotion-window-component'
-  ];
+  const promotionOptions = [];
+  const promoWindow = document.querySelector(
+    '.promotion-window, .promotion-menu, .promotion-window-component'
+  );
 
-  for (const sel of promoSelectors) {
-    const el = document.querySelector(sel);
-    if (el) {
-      const style = window.getComputedStyle(el);
-      if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+  if (promoWindow) {
+    const style = window.getComputedStyle(promoWindow);
+    if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+      promotionOpen = true;
+      const pieceEls = promoWindow.querySelectorAll('.promotion-piece, [data-piece]');
+      pieceEls.forEach((el) => {
+        const cls = el.className || '';
+        let pieceType = null;
+        const dataP = el.getAttribute('data-piece');
+        if (dataP) {
+          pieceType = dataP.toLowerCase();
+        } else {
+          const m = cls.match(/\b[wb]([qrbn])\b/i);
+          if (m) {
+            pieceType = m[1].toLowerCase();
+          }
+        }
+        if (pieceType) {
+          const r = el.getBoundingClientRect();
+          promotionOptions.push({
+            piece: pieceType,
+            rect: {
+              x: r.x !== undefined ? r.x : r.left,
+              y: r.y !== undefined ? r.y : r.top,
+              width: r.width,
+              height: r.height
+            }
+          });
+        }
+      });
+    }
+  }
+
+  if (!promotionOpen) {
+    const directPieces = document.querySelectorAll('div.promotion-piece');
+    if (directPieces.length > 0) {
+      const firstStyle = window.getComputedStyle(directPieces[0]);
+      if (firstStyle && firstStyle.display !== 'none' && firstStyle.visibility !== 'hidden') {
         promotionOpen = true;
-        break;
+        directPieces.forEach((el) => {
+          const cls = el.className || '';
+          const m = cls.match(/\b[wb]([qrbn])\b/i);
+          const pieceType = m ? m[1].toLowerCase() : 'q';
+          const r = el.getBoundingClientRect();
+          promotionOptions.push({
+            piece: pieceType,
+            rect: {
+              x: r.x !== undefined ? r.x : r.left,
+              y: r.y !== undefined ? r.y : r.top,
+              width: r.width,
+              height: r.height
+            }
+          });
+        });
       }
     }
   }
@@ -351,6 +396,7 @@
     gameOver: gameOver,
     gameOverText: gameOverText,
     promotionOpen: promotionOpen,
+    promotionOptions: promotionOptions,
     devicePixelRatio: dpr,
     window: winInfo,
     dragging: isDragging,

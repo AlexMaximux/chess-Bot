@@ -1,7 +1,7 @@
 """Typed models and strict parsing for DOM snapshots."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 SQUARE_REGEX = re.compile(r"^[a-h][1-8]$")
@@ -39,6 +39,12 @@ class PieceInfo:
 
 
 @dataclass(frozen=True)
+class PromotionOption:
+    piece: str  # 'q', 'r', 'b', 'n'
+    rect: Rect
+
+
+@dataclass(frozen=True)
 class Snapshot:
     url: str
     found: bool
@@ -55,6 +61,7 @@ class Snapshot:
     window: WindowInfo
     dragging: bool
     our_color_hint: str | None = None
+    promotion_options: list[PromotionOption] = field(default_factory=list)
 
 
 def _parse_rect(raw: Any) -> Rect:
@@ -192,6 +199,15 @@ def parse_snapshot(raw: object) -> Snapshot:
     if hint is not None and hint not in ("w", "b"):
         raise SnapshotError(f"Expected ourColorHint to be 'w', 'b', or null, got {hint!r}")
 
+    promotion_options: list[PromotionOption] = []
+    raw_promo_opts = raw.get("promotionOptions", raw.get("promotion_options", []))
+    if isinstance(raw_promo_opts, list):
+        for opt in raw_promo_opts:
+            if isinstance(opt, dict) and "piece" in opt and "rect" in opt:
+                piece_str = str(opt["piece"]).lower()
+                r_opt = _parse_rect(opt["rect"])
+                promotion_options.append(PromotionOption(piece=piece_str, rect=r_opt))
+
     return Snapshot(
         url=url,
         found=found,
@@ -208,4 +224,5 @@ def parse_snapshot(raw: object) -> Snapshot:
         window=win,
         dragging=dragging,
         our_color_hint=hint,
+        promotion_options=promotion_options,
     )

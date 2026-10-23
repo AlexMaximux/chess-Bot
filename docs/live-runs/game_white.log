@@ -1,0 +1,221 @@
+2026-10-23 10:00:29 [INFO] chess_autoplayer.chrome.launcher: Chrome debug port 9333 is already active; attaching to ws://127.0.0.1:9333/devtools/browser/8b3bc2bb-b89f-45c2-9cfe-f2768aafd14d
+2026-10-23 10:00:29 [INFO] chess_autoplayer.chrome.page: Found existing chess.com/play/computer tab: 01BD45901114C62F64197B6E6E5165C2 (https://www.chess.com/play/computer)
+2026-10-23 10:00:30 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 0)
+2026-10-23 10:00:30 [INFO] chess_autoplayer.bot.controller: Decision: e4 (eval=+39 cp, think=2.02s)
+2026-10-23 10:00:32 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move e4)
+2026-10-23 10:00:34 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying e4)
+2026-10-23 10:00:34 [INFO] chess_autoplayer.bot.controller: Move 1: e4 by Bot
+2026-10-23 10:00:34 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:00:37 [INFO] chess_autoplayer.bot.controller: Move 2: e5 by Opponent
+2026-10-23 10:00:37 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 2)
+2026-10-23 10:00:38 [INFO] chess_autoplayer.bot.controller: Decision: Nf3 (eval=+39 cp, think=1.78s)
+2026-10-23 10:00:39 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nf3)
+2026-10-23 10:00:41 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nf3)
+2026-10-23 10:00:41 [INFO] chess_autoplayer.bot.controller: Move 3: Nf3 by Bot
+2026-10-23 10:00:41 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:00:43 [INFO] chess_autoplayer.bot.controller: Move 4: Nf6 by Opponent
+2026-10-23 10:00:44 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 4)
+2026-10-23 10:00:44 [INFO] chess_autoplayer.bot.controller: Decision: d3 (eval=+47 cp, think=11.52s)
+2026-10-23 10:00:55 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move d3)
+2026-10-23 10:00:57 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying d3)
+2026-10-23 10:00:57 [INFO] chess_autoplayer.bot.controller: Move 5: d3 by Bot
+2026-10-23 10:00:57 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:00:59 [INFO] chess_autoplayer.bot.controller: Move 6: Qe7 by Opponent
+2026-10-23 10:00:59 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 6)
+2026-10-23 10:00:59 [INFO] chess_autoplayer.bot.controller: Decision: Nc3 (eval=+54 cp, think=3.28s)
+2026-10-23 10:01:02 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nc3)
+2026-10-23 10:01:04 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nc3)
+2026-10-23 10:01:04 [INFO] chess_autoplayer.bot.controller: Move 7: Nc3 by Bot
+2026-10-23 10:01:05 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:01:07 [INFO] chess_autoplayer.bot.controller: Move 8: Na6 by Opponent
+2026-10-23 10:01:08 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 8)
+2026-10-23 10:01:08 [INFO] chess_autoplayer.bot.controller: Decision: Bg5 (eval=+116 cp, think=1.24s)
+2026-10-23 10:01:09 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Bg5)
+2026-10-23 10:01:11 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Bg5)
+2026-10-23 10:01:11 [INFO] chess_autoplayer.bot.controller: Move 9: Bg5 by Bot
+2026-10-23 10:01:11 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:01:13 [INFO] chess_autoplayer.bot.controller: Move 10: h5 by Opponent
+2026-10-23 10:01:13 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 10)
+2026-10-23 10:01:13 [INFO] chess_autoplayer.bot.controller: Decision: g3 (eval=+233 cp, think=11.46s)
+2026-10-23 10:01:25 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move g3)
+2026-10-23 10:01:26 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying g3)
+2026-10-23 10:01:26 [INFO] chess_autoplayer.bot.controller: Move 11: g3 by Bot
+2026-10-23 10:01:26 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:01:29 [INFO] chess_autoplayer.bot.controller: Move 12: Kd8 by Opponent
+2026-10-23 10:01:29 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 12)
+2026-10-23 10:01:30 [INFO] chess_autoplayer.bot.controller: Decision: d4 (eval=+359 cp, think=7.66s)
+2026-10-23 10:01:37 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move d4)
+2026-10-23 10:01:38 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying d4)
+2026-10-23 10:01:38 [INFO] chess_autoplayer.bot.controller: Move 13: d4 by Bot
+2026-10-23 10:01:39 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:01:41 [INFO] chess_autoplayer.bot.controller: Move 14: Nd5 by Opponent
+2026-10-23 10:01:42 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 14)
+2026-10-23 10:01:42 [INFO] chess_autoplayer.bot.controller: Decision: Nxd5 (eval=+740 cp, think=11.17s)
+2026-10-23 10:01:53 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nxd5)
+2026-10-23 10:01:54 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nxd5)
+2026-10-23 10:01:54 [INFO] chess_autoplayer.bot.controller: Move 15: Nxd5 by Bot
+2026-10-23 10:01:55 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:01:56 [INFO] chess_autoplayer.bot.controller: Move 16: Qxg5 by Opponent
+2026-10-23 10:01:57 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 16)
+2026-10-23 10:01:57 [INFO] chess_autoplayer.bot.controller: Decision: Nxg5 (eval=+851 cp, think=0.83s)
+2026-10-23 10:01:58 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nxg5)
+2026-10-23 10:01:59 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nxg5)
+2026-10-23 10:01:59 [INFO] chess_autoplayer.bot.controller: Move 17: Nxg5 by Bot
+2026-10-23 10:01:59 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:02:01 [INFO] chess_autoplayer.bot.controller: Move 18: b5 by Opponent
+2026-10-23 10:02:01 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 18)
+2026-10-23 10:02:02 [INFO] chess_autoplayer.bot.controller: Decision: Nxf7+ (eval=+99900 cp, think=19.42s)
+2026-10-23 10:02:21 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nxf7+)
+2026-10-23 10:02:22 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nxf7+)
+2026-10-23 10:02:22 [INFO] chess_autoplayer.bot.controller: Move 19: Nxf7+ by Bot
+2026-10-23 10:02:22 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:02:24 [INFO] chess_autoplayer.bot.controller: Move 20: Ke8 by Opponent
+2026-10-23 10:02:25 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 20)
+2026-10-23 10:02:25 [INFO] chess_autoplayer.bot.controller: Decision: Nxh8 (eval=+99910 cp, think=6.64s)
+2026-10-23 10:02:31 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nxh8)
+2026-10-23 10:02:32 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nxh8)
+2026-10-23 10:02:33 [INFO] chess_autoplayer.bot.controller: Move 21: Nxh8 by Bot
+2026-10-23 10:02:33 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:02:35 [INFO] chess_autoplayer.bot.controller: Move 22: Bc5 by Opponent
+2026-10-23 10:02:36 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 22)
+2026-10-23 10:02:36 [INFO] chess_autoplayer.bot.controller: Decision: Qxh5+ (eval=+99960 cp, think=21.59s)
+2026-10-23 10:02:57 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Qxh5+)
+2026-10-23 10:02:59 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Qxh5+)
+2026-10-23 10:02:59 [INFO] chess_autoplayer.bot.controller: Move 23: Qxh5+ by Bot
+2026-10-23 10:03:00 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:03:02 [INFO] chess_autoplayer.bot.controller: Move 24: Kd8 by Opponent
+2026-10-23 10:03:02 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 24)
+2026-10-23 10:03:03 [INFO] chess_autoplayer.bot.controller: Decision: Nf7+ (eval=+99970 cp, think=7.68s)
+2026-10-23 10:03:10 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nf7+)
+2026-10-23 10:03:12 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nf7+)
+2026-10-23 10:03:12 [INFO] chess_autoplayer.bot.controller: Move 25: Nf7+ by Bot
+2026-10-23 10:03:12 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:03:14 [INFO] chess_autoplayer.bot.controller: Move 26: Ke8 by Opponent
+2026-10-23 10:03:14 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 26)
+2026-10-23 10:03:15 [INFO] chess_autoplayer.bot.controller: Decision: Nd6+ (eval=+99980 cp, think=14.52s)
+2026-10-23 10:03:29 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Nd6+)
+2026-10-23 10:03:30 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Nd6+)
+2026-10-23 10:03:30 [INFO] chess_autoplayer.bot.controller: Move 27: Nd6+ by Bot
+2026-10-23 10:03:30 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:03:33 [INFO] chess_autoplayer.bot.controller: Move 28: Kd8 by Opponent
+2026-10-23 10:03:33 [INFO] chess_autoplayer.bot.controller: State: THINKING (Thinking on ply 28)
+2026-10-23 10:03:33 [INFO] chess_autoplayer.bot.controller: Decision: Qg5# (eval=+99990 cp, think=15.02s)
+2026-10-23 10:03:48 [INFO] chess_autoplayer.bot.controller: State: MOVING (Playing move Qg5#)
+2026-10-23 10:03:50 [INFO] chess_autoplayer.bot.controller: State: VERIFYING (Verifying Qg5#)
+2026-10-23 10:03:50 [INFO] chess_autoplayer.bot.controller: Move 29: Qg5# by Bot
+2026-10-23 10:03:50 [INFO] chess_autoplayer.bot.controller: State: OPPONENT_TURN (Waiting for opponent move)
+2026-10-23 10:03:51 [INFO] chess_autoplayer.bot.controller: State: GAME_OVER (You Beat  Martinfoot! by checkmate)
+2026-10-23 10:03:51 [INFO] chess_autoplayer.bot.controller: Game Over: You Beat  Martinfoot! by checkmate
+2026-10-23 10:04:19 [INFO] chess_autoplayer.bot.controller: State: STOPPED (Controller stopped)
+Starting chess-autoplayer (strength=club, speed=0.5, input=cdp, style=mixed)...
+Press Ctrl+C to stop.
+[THINKING] Thinking on ply 0
+[DECISION] e4 (eval: +39 cp, think: 2.02s)
+[MOVING] Playing move e4
+[VERIFYING] Verifying e4
+[MOVE] ply 1: e4 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 2: e5 (opponent)
+[THINKING] Thinking on ply 2
+[DECISION] Nf3 (eval: +39 cp, think: 1.78s)
+[MOVING] Playing move Nf3
+[VERIFYING] Verifying Nf3
+[MOVE] ply 3: Nf3 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 4: Nf6 (opponent)
+[THINKING] Thinking on ply 4
+[DECISION] d3 (eval: +47 cp, think: 11.52s)
+[MOVING] Playing move d3
+[VERIFYING] Verifying d3
+[MOVE] ply 5: d3 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 6: Qe7 (opponent)
+[THINKING] Thinking on ply 6
+[DECISION] Nc3 (eval: +54 cp, think: 3.28s)
+[MOVING] Playing move Nc3
+[VERIFYING] Verifying Nc3
+[MOVE] ply 7: Nc3 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 8: Na6 (opponent)
+[THINKING] Thinking on ply 8
+[DECISION] Bg5 (eval: +116 cp, think: 1.24s)
+[MOVING] Playing move Bg5
+[VERIFYING] Verifying Bg5
+[MOVE] ply 9: Bg5 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 10: h5 (opponent)
+[THINKING] Thinking on ply 10
+[DECISION] g3 (eval: +233 cp, think: 11.46s)
+[MOVING] Playing move g3
+[VERIFYING] Verifying g3
+[MOVE] ply 11: g3 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 12: Kd8 (opponent)
+[THINKING] Thinking on ply 12
+[DECISION] d4 (eval: +359 cp, think: 7.66s)
+[MOVING] Playing move d4
+[VERIFYING] Verifying d4
+[MOVE] ply 13: d4 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 14: Nd5 (opponent)
+[THINKING] Thinking on ply 14
+[DECISION] Nxd5 (eval: +740 cp, think: 11.17s)
+[MOVING] Playing move Nxd5
+[VERIFYING] Verifying Nxd5
+[MOVE] ply 15: Nxd5 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 16: Qxg5 (opponent)
+[THINKING] Thinking on ply 16
+[DECISION] Nxg5 (eval: +851 cp, think: 0.83s)
+[MOVING] Playing move Nxg5
+[VERIFYING] Verifying Nxg5
+[MOVE] ply 17: Nxg5 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 18: b5 (opponent)
+[THINKING] Thinking on ply 18
+[DECISION] Nxf7+ (eval: +99900 cp, think: 19.42s)
+[MOVING] Playing move Nxf7+
+[VERIFYING] Verifying Nxf7+
+[MOVE] ply 19: Nxf7+ (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 20: Ke8 (opponent)
+[THINKING] Thinking on ply 20
+[DECISION] Nxh8 (eval: +99910 cp, think: 6.64s)
+[MOVING] Playing move Nxh8
+[VERIFYING] Verifying Nxh8
+[MOVE] ply 21: Nxh8 (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 22: Bc5 (opponent)
+[THINKING] Thinking on ply 22
+[DECISION] Qxh5+ (eval: +99960 cp, think: 21.59s)
+[MOVING] Playing move Qxh5+
+[VERIFYING] Verifying Qxh5+
+[MOVE] ply 23: Qxh5+ (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 24: Kd8 (opponent)
+[THINKING] Thinking on ply 24
+[DECISION] Nf7+ (eval: +99970 cp, think: 7.68s)
+[MOVING] Playing move Nf7+
+[VERIFYING] Verifying Nf7+
+[MOVE] ply 25: Nf7+ (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 26: Ke8 (opponent)
+[THINKING] Thinking on ply 26
+[DECISION] Nd6+ (eval: +99980 cp, think: 14.52s)
+[MOVING] Playing move Nd6+
+[VERIFYING] Verifying Nd6+
+[MOVE] ply 27: Nd6+ (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[MOVE] ply 28: Kd8 (opponent)
+[THINKING] Thinking on ply 28
+[DECISION] Qg5# (eval: +99990 cp, think: 15.02s)
+[MOVING] Playing move Qg5#
+[VERIFYING] Verifying Qg5#
+[MOVE] ply 29: Qg5# (bot)
+[OPPONENT_TURN] Waiting for opponent move
+[GAME_OVER] You Beat  Martinfoot! by checkmate
+[GAME OVER] You Beat  Martinfoot! by checkmate
+
+Stopping bot...
+[STOPPED] Controller stopped
+Shutdown complete. Chrome left open.

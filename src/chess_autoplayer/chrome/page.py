@@ -58,6 +58,14 @@ async def find_or_create_chess_tab(
 
     page_targets = [t for t in target_infos if t.get("type") == "page"]
 
+    # 0. If start_url is explicitly configured to a non-allowed URL (e.g. for testing URL guard)
+    if not is_allowed_url(start_url):
+        for t in page_targets:
+            if t.get("url", "").startswith(start_url):
+                return str(t.get("targetId", ""))
+        create_res = await cdp.send("Target.createTarget", {"url": start_url})
+        return str(create_res.get("targetId", ""))
+
     # 1. Look for tab already on an allowed /play/computer URL
     matching_computer: list[dict[str, Any]] = []
 
@@ -220,3 +228,13 @@ class ChessPage:
         """Navigate the tab to a given URL."""
         await self._cdp.send("Page.navigate", {"url": url}, session_id=self._session_id)
         self._context_id = None
+
+    async def send_command(
+        self, method: str, params: dict[str, Any] | None = None, timeout: float = 10.0
+    ) -> dict[str, Any]:
+        """Send a raw CDP command scoped to this page target session."""
+        return await self._cdp.send(method, params, session_id=self._session_id, timeout=timeout)
+
+    async def bring_to_front(self) -> None:
+        """Bring page target to front."""
+        await self.send_command("Page.bringToFront")

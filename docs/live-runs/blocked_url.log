@@ -1,0 +1,11 @@
+2026-10-23 09:57:40 [INFO] chess_autoplayer.chrome.launcher: Launching Chrome at /Applications/Google Chrome.app/Contents/MacOS/Google Chrome with profile /Users/nersibayat/.chess-autoplayer/chrome-profile on port 9333...
+2026-10-23 09:57:41 [INFO] chess_autoplayer.chrome.launcher: Chrome debug port became ready in 1.33s (ws://127.0.0.1:9333/devtools/browser/8b3bc2bb-b89f-45c2-9cfe-f2768aafd14d)
+2026-10-23 09:57:42 [INFO] chess_autoplayer.bot.controller: State: BLOCKED_URL (Guard active: URL 'https://www.chess.com/play/online' is not an allowed computer play path)
+2026-10-23 09:57:44 [INFO] chess_autoplayer.bot.controller: State: STOPPED (Controller stopped)
+Starting chess-autoplayer (strength=club, speed=1.0, input=cdp, style=mixed)...
+Press Ctrl+C to stop.
+[BLOCKED_URL] Guard active: URL 'https://www.chess.com/play/online' is not an allowed computer play path
+
+Stopping bot...
+[STOPPED] Controller stopped
+Shutdown complete. Chrome left open.

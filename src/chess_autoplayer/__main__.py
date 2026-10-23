@@ -7,13 +7,24 @@ import logging
 import random
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import chess
 
 from chess_autoplayer.board.reader import get_reader_js
 from chess_autoplayer.board.snapshot import parse_snapshot
 from chess_autoplayer.board.state import GameState, StateError
+from chess_autoplayer.bot.controller import BotController
+from chess_autoplayer.bot.events import (
+    BotEvent,
+    DecisionEvent,
+    ErrorEvent,
+    GameOverEvent,
+    MoveEvent,
+    StatusEvent,
+)
 from chess_autoplayer.chrome.cdp import CDPClient
 from chess_autoplayer.chrome.launcher import launch_or_attach_chrome
 from chess_autoplayer.chrome.page import ChessPage, find_or_create_chess_tab, is_allowed_url
@@ -22,6 +33,8 @@ from chess_autoplayer.engine.profiles import PROFILES
 from chess_autoplayer.engine.selector import select_move
 from chess_autoplayer.engine.stockfish import Engine, EngineError
 from chess_autoplayer.human.timing import compute_think_time
+from chess_autoplayer.input.base import MoveInput
+from chess_autoplayer.input.cdp_input import CDPInput
 from chess_autoplayer.logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -250,6 +263,134 @@ async def async_analyse(
     return 0
 
 
+async def async_run(
+    strength: str | None = None,
+    speed: float | None = None,
+    input_mode: str | None = None,
+    move_style: str | None = None,
+    seed: int | None = None,
+    start_url: str | None = None,
+) -> int:
+    """Run autonomous chess bot loop."""
+    base_settings = load_config()
+    kwargs: dict[str, Any] = {}
+    if strength is not None:
+        kwargs["strength"] = strength
+    if speed is not None:
+        kwargs["speed"] = speed
+    if input_mode is not None:
+        kwargs["input_mode"] = input_mode
+    if move_style is not None:
+        kwargs["move_style"] = move_style
+    if start_url is not None:
+        kwargs["start_url"] = start_url
+
+    settings = replace(base_settings, **kwargs)
+
+    try:
+        ws_url = await launch_or_attach_chrome(settings)
+    except Exception as exc:
+        print(f"Error launching/attaching to Chrome: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        cdp = await CDPClient.connect(ws_url)
+    except Exception as exc:
+        print(f"Error connecting to Chrome CDP at {ws_url}: {exc}", file=sys.stderr)
+        return 1
+
+    target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+    page = await ChessPage.attach(cdp, target_id)
+
+    engine = Engine(settings.resolved_stockfish_path(), profile=settings.strength)
+    try:
+        engine.start()
+    except EngineError as exc:
+        print(f"Stockfish engine error: {exc}", file=sys.stderr)
+        await cdp.close()
+        return 1
+
+    input_handler: MoveInput
+    if settings.input_mode == "os":
+        from chess_autoplayer.input.os_input import AccessibilityPermissionError, OSInput
+
+        try:
+            os_inp = OSInput(page)
+            os_inp.verify_permissions()
+            input_handler = os_inp
+        except AccessibilityPermissionError as a_err:
+            print(f"Accessibility Error: {a_err}", file=sys.stderr)
+            engine.close()
+            await cdp.close()
+            return 1
+    else:
+        input_handler = CDPInput(page)
+
+    rng = random.Random(seed) if seed is not None else random.Random()
+
+    def on_event(event: BotEvent) -> None:
+        if isinstance(event, StatusEvent):
+            print(f"[{event.state.value}] {event.message}")
+        elif isinstance(event, DecisionEvent):
+            print(
+                f"[DECISION] {event.move_san} "
+                f"(eval: {event.eval_cp:+d} cp, think: {event.think_s:.2f}s)"
+            )
+        elif isinstance(event, MoveEvent):
+            who = "bot" if event.by_bot else "opponent"
+            print(f"[MOVE] ply {event.ply}: {event.san} ({who})")
+        elif isinstance(event, GameOverEvent):
+            print(f"[GAME OVER] {event.text}")
+        elif isinstance(event, ErrorEvent):
+            print(f"[ERROR] {event.message}", file=sys.stderr)
+
+    controller = BotController(
+        page=page,
+        engine=engine,
+        input_handler=input_handler,
+        settings=settings,
+        event_callback=on_event,
+        rng=rng,
+    )
+
+    print(
+        f"Starting chess-autoplayer (strength={settings.strength}, speed={settings.speed}, "
+        f"input={settings.input_mode}, style={settings.move_style})..."
+    )
+    print("Press Ctrl+C to stop.")
+
+    await controller.start()
+
+    stop_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    def _sig_handler() -> None:
+        if not stop_future.done():
+            stop_future.set_result(None)
+
+    loop = asyncio.get_running_loop()
+    try:
+        import signal
+
+        loop.add_signal_handler(signal.SIGINT, _sig_handler)
+        loop.add_signal_handler(signal.SIGTERM, _sig_handler)
+    except (NotImplementedError, RuntimeError):
+        pass
+
+    try:
+        while not stop_future.done():
+            await asyncio.sleep(0.5)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
+    finally:
+        print("\nStopping bot...")
+        await controller.stop()
+        engine.close()
+        await cdp.close()
+        print("Shutdown complete. Chrome left open.")
+
+    return 0
+
+
 def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -302,8 +443,53 @@ def main() -> None:
         "-v", "--verbose", action="store_true", help="Enable verbose debug logging"
     )
 
-    # run subcommand (placeholder for brief 03)
-    subparsers.add_parser("run", help="Run autoplayer bot loop (brief 03)")
+    # run subcommand
+    run_parser = subparsers.add_parser("run", help="Run autoplayer bot loop")
+    run_parser.add_argument(
+        "--strength",
+        type=str,
+        default=None,
+        metavar="NAME",
+        help="Strength profile: beginner, casual, club, strong, master, max",
+    )
+    run_parser.add_argument(
+        "--speed",
+        type=float,
+        default=None,
+        metavar="X",
+        help="Speed multiplier (default: 1.0)",
+    )
+    run_parser.add_argument(
+        "--input",
+        dest="input_mode",
+        choices=["cdp", "os"],
+        default=None,
+        help="Input mode: cdp (default) or os",
+    )
+    run_parser.add_argument(
+        "--style",
+        dest="move_style",
+        choices=["drag", "click", "mixed"],
+        default=None,
+        help="Move style: drag, click, or mixed",
+    )
+    run_parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Random seed for move choice and human mouse trajectories",
+    )
+    run_parser.add_argument(
+        "--start-url",
+        type=str,
+        default=None,
+        metavar="URL",
+        help="Initial URL to attach to or navigate (default: https://www.chess.com/play/computer)",
+    )
+    run_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Enable verbose debug logging"
+    )
 
     # gui subcommand (placeholder for brief 04)
     subparsers.add_parser("gui", help="Launch Tkinter desktop GUI (brief 04)")
@@ -325,8 +511,20 @@ def main() -> None:
             )
         )
         sys.exit(exit_code)
-    elif args.command in ("run", "gui"):
-        print(f"Subcommand {args.command!r} is not implemented yet (scheduled for later brief).")
+    elif args.command == "run":
+        exit_code = asyncio.run(
+            async_run(
+                strength=args.strength,
+                speed=args.speed,
+                input_mode=args.input_mode,
+                move_style=args.move_style,
+                seed=args.seed,
+                start_url=args.start_url,
+            )
+        )
+        sys.exit(exit_code)
+    elif args.command == "gui":
+        print("Subcommand 'gui' is not implemented yet (scheduled for brief 04).")
         sys.exit(0)
     else:
         parser.print_help()

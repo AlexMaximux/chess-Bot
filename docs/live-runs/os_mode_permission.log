@@ -1,0 +1,4 @@
+2026-10-23 09:53:51 [INFO] chess_autoplayer.chrome.launcher: Chrome debug port 9333 is already active; attaching to ws://127.0.0.1:9333/devtools/browser/23e2a888-ba9a-41f6-8f5e-6d526ec52517
+2026-10-23 09:53:51 [INFO] chess_autoplayer.chrome.page: No tab found on an allowed /play/computer URL; creating new target with url https://www.chess.com/play/computer
+Accessibility Error: macOS Accessibility permission is required for OS mouse input.
+Please grant permission in: System Settings → Privacy & Security → Accessibility → the terminal app you run it from.

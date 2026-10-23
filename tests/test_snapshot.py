@@ -62,6 +62,23 @@ def test_parse_valid_snapshot() -> None:
     assert snap.device_pixel_ratio == 2.0
     assert snap.window == WindowInfo(0.0, 25.0, 1440.0, 900.0, 1200.0, 800.0)
     assert snap.dragging is False
+    assert snap.our_color_hint is None
+    assert snap.promotion_options == []
+
+
+def test_parse_snapshot_with_promotion_options() -> None:
+    raw = sample_valid_raw_snapshot()
+    raw["promotionOpen"] = True
+    raw["promotionOptions"] = [
+        {"piece": "q", "rect": {"x": 200.0, "y": 200.0, "width": 50.0, "height": 50.0}},
+        {"piece": "n", "rect": {"x": 200.0, "y": 250.0, "width": 50.0, "height": 50.0}},
+    ]
+    snap = parse_snapshot(raw)
+    assert snap.promotion_open is True
+    assert len(snap.promotion_options) == 2
+    assert snap.promotion_options[0].piece == "q"
+    assert snap.promotion_options[0].rect == Rect(200.0, 200.0, 50.0, 50.0)
+    assert snap.promotion_options[1].piece == "n"
 
 
 def test_parse_not_found_snapshot() -> None:

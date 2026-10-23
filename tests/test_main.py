@@ -75,14 +75,17 @@ def test_cli_analyse_invalid_strength() -> None:
     assert "Unknown strength profile" in res.stderr
 
 
-def test_cli_run_placeholder() -> None:
+def test_cli_run_help() -> None:
     res = subprocess.run(
-        [sys.executable, "-m", "chess_autoplayer", "run"],
+        [sys.executable, "-m", "chess_autoplayer", "run", "--help"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert "not implemented yet" in res.stdout
+    assert "--strength" in res.stdout
+    assert "--speed" in res.stdout
+    assert "--input" in res.stdout
+    assert "--style" in res.stdout
 
 
 def test_cli_gui_placeholder() -> None:

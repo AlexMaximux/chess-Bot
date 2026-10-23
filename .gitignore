@@ -33,6 +33,7 @@ ENV/
 
 # Logs
 *.log
+!docs/live-runs/*.log
 
 # OS
 .DS_Store
