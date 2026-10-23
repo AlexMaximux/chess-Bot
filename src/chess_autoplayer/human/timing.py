@@ -54,8 +54,10 @@ def compute_think_time(
     ply: int | None = None,
     last_move: chess.Move | None = None,
     clock_seconds: float | None = None,
+    increment_seconds: float = 0.0,
     speed: float = 1.0,
     rng: random.Random | None = None,
+    is_book: bool = False,
 ) -> float:
     """Calculate realistic human think time in seconds for the chosen move."""
     r = rng if rng is not None else random.Random()
@@ -72,14 +74,20 @@ def compute_think_time(
         or len(candidates) == 1
         or is_obvious_recapture(board, candidates, chosen_move, last_move=last_move)
     ):
+        # NOTE: Obvious recapture or forced move - در بازپس‌گیری‌های واضح یا تک‌حرکت قانونی،
+        # انسان زمان پردازش ذهنی را بسیار کوتاه می‌کند و ظرف ۰.۴ تا ۱.۲ ثانیه واکنش نشان می‌دهد.
         duration = r.uniform(0.4, 1.2)
 
-    # 2. Book phase: ply < 10 and move is among top-2 candidates
-    elif effective_ply < 10 and any(c.move == chosen_move for c in candidates[:2]):
+    # 2. Book phase: early plies (< 10) or recognized opening book recall: 0.6–2.0 s
+    elif is_book or (effective_ply < 10 and any(c.move == chosen_move for c in candidates[:2])):
+        # NOTE: Opening phase recall - در حرکات گشایش، بازیکن از حافظه با مکث طبیعی ۰.۶ تا ۲.۰ ثانیه بازی می‌کند.
         duration = r.uniform(0.6, 2.0)
+
 
     # 3. Base by complexity
     else:
+        # NOTE: Positional complexity scaling - هرچه گزینه‌های قانونی و مهره‌های درگیر بیشتر باشند
+        # یا شاه در معرض کیش باشد، فرآیند محاسبه شاخه‌ها در قشر مخ انسان طولانی‌تر می‌شود.
         legal_count = board.legal_moves.count()
         piece_count = len(board.piece_map())
 
@@ -94,6 +102,8 @@ def compute_think_time(
         if board.is_check():
             base += 1.0
 
+        # NOTE: Log-normal timing jitter - زمان تصمیم‌گیری انسان دارای نوسان طبیعی و نویز لگ‌نرمال است
+        # تا الگوی ماشینی و فواصل زمانی تکراری تولید نشود.
         noise = math.exp(r.gauss(0, 0.35))
         duration = base * noise
         # Typical 2–10 s, hard cap 25 s
@@ -103,10 +113,43 @@ def compute_think_time(
     effective_speed = max(0.01, speed)
     duration = duration / effective_speed
 
-    # 5. Clock-aware constraints
-    if clock_seconds is not None:
-        duration = min(duration, max(0.2, clock_seconds * 0.05))
-        if clock_seconds < 20.0:
-            duration = min(duration, 1.5)
+    # 5. Panic mode vs Hard floor constraint
+    is_panic = clock_seconds is not None and clock_seconds < 10.0 and increment_seconds == 0.0
 
-    return duration
+    if is_panic:
+        # NOTE: Panic floor 0.12s - در تنگی وقت شدید (زیر ۱۰ ثانیه و بدون اینکریمنت در بولت)،
+        # بازیکن انسان با تکیه بر پیش‌حرکت (premove) و واکنش‌های غریزی با حداقل تأخیر ممکن (~۱۲۰ms)
+        # بازی می‌کند تا پرچم نخورد (flag نشود)، اما کمتر از ۱۲۰ میلی‌ثانیه نقض محدودیت فیزیکی عصب و عضله انسان است.
+        hard_floor = 0.12
+    else:
+        # NOTE: Hard floor 0.30s - حداقل زمان واکنش بینایی-حرکتی انسان ۳۰۰ میلی‌ثانیه است؛
+        # حرکت آنی و بدون وقفه (زیر ۳۰۰ms) در حالت عادی بارزترین نشانه استفاده از بات برای سیستم‌های ضدتقلب است.
+        hard_floor = 0.30
+
+    # 6. Clock-aware budgeting & constraints
+    if clock_seconds is not None:
+        moves_remaining = max(10, min(40, 45 - (effective_ply // 2)))
+        clock_budget = (clock_seconds / moves_remaining) + (increment_seconds * 0.75)
+        budget_noise = math.exp(r.gauss(0, 0.20))
+        budget = max(hard_floor, clock_budget * budget_noise)
+
+        if is_panic:
+            # Panic mode: clock is low (< 10s without increment)
+            # Instinctive rapid moves while preserving human jitter
+            panic_jitter = math.exp(r.gauss(0, 0.25))
+            panic_budget = max(hard_floor, (clock_seconds / 15.0) * panic_jitter)
+            panic_budget = min(panic_budget, 1.5)
+            duration = min(duration, panic_budget)
+        else:
+            # Hard clock limits with subtle human jitter to avoid flagging
+            jitter_clock = math.exp(r.gauss(0, 0.10))
+            max_clock_time = max(
+                hard_floor, (clock_seconds * 0.05 + increment_seconds * 0.75) * jitter_clock
+            )
+            if clock_seconds < 20.0 and increment_seconds == 0.0:
+                max_clock_time = min(max_clock_time, 1.5)
+            duration = min(duration, max(budget, hard_floor))
+            duration = min(duration, max_clock_time)
+
+    delay = max(hard_floor, duration)
+    return delay

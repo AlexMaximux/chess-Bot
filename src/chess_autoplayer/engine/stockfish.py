@@ -2,6 +2,7 @@
 
 import logging
 import os
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import chess
 import chess.engine
 
+from chess_autoplayer.engine.book import get_book_lines
 from chess_autoplayer.engine.profiles import Profile, get_profile
 
 logger = logging.getLogger(__name__)
@@ -52,9 +54,15 @@ def map_engine_score(score: chess.engine.PovScore, turn: chess.Color) -> tuple[i
 class Engine:
     """Wrapper around Stockfish UCI engine."""
 
-    def __init__(self, stockfish_path: Path | str, profile: Profile | str = "club") -> None:
+    def __init__(
+        self,
+        stockfish_path: Path | str,
+        profile: Profile | str = "club",
+        rng: random.Random | None = None,
+    ) -> None:
         self.path = Path(stockfish_path).expanduser().resolve()
         self.profile = get_profile(profile) if isinstance(profile, str) else profile
+        self.rng = rng if rng is not None else random.Random()
         self._engine: chess.engine.SimpleEngine | None = None
 
     def start(self) -> None:
@@ -109,15 +117,31 @@ class Engine:
         if self._engine is not None:
             self._configure_engine()
 
-    def analyse(self, board: chess.Board) -> list[Line]:
-        """Perform MultiPV analysis on the given position. Restarts once if crashed."""
+    def analyse(
+        self,
+        board: chess.Board,
+        rng: random.Random | None = None,
+        use_book: bool = True,
+    ) -> list[Line]:
+        r = rng if rng is not None else self.rng
+
+        # NOTE: Opening book usage - انسان در حرکات آغازین از تئوری گشایش و حافظه استفاده می‌کند
+        # و عمق انجین محاسبه نمی‌شود. این کار هم بار پردازشی را برمی‌دارد و هم الگوهای طبیعی گشایش انسانی ایجاد می‌کند.
+        if use_book:
+            book_lines = get_book_lines(board, rng=r)
+            if book_lines:
+                return book_lines
+
         if self._engine is None:
             self.start()
 
         for attempt in range(2):
             try:
                 assert self._engine is not None
-                limit = chess.engine.Limit(time=self.profile.time_limit)
+                # NOTE: Variable calculation depth (10-16 plies) - عمق محاسبه انسان در هر حرکت ثابت نیست
+                # و بر اساس خستگی و پیچیدگی تغییر می‌کند. استفاده از عمق متغیر مانع از تشخیص اثر انگشت ثابت انجین می‌شود.
+                chosen_depth = r.randint(10, 16)
+                limit = chess.engine.Limit(depth=chosen_depth)
                 infos = self._engine.analyse(
                     board,
                     limit,

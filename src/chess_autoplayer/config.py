@@ -12,6 +12,7 @@ DEFAULT_CONFIG_DIR = Path("~/.chess-autoplayer").expanduser()
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
 
 VALID_INPUT_MODES = {"cdp", "os"}
+VALID_MODES = {"bot", "human"}
 VALID_MOVE_STYLES = {"drag", "click", "mixed"}
 VALID_PLAY_AS = {"auto", "white", "black"}
 VALID_STRENGTHS = {"beginner", "casual", "club", "strong", "master", "max"}
@@ -29,12 +30,20 @@ class Settings:
     stockfish_path: str = "/opt/homebrew/bin/stockfish"
     profile_dir: str = "~/.chess-autoplayer/chrome-profile"
     debug_port: int = 9333
-    start_url: str = "https://www.chess.com/play/computer"
+    start_url: str = "https://www.chess.com/play/online"
+    mode: str = "human"
     strength: str = "club"
     speed: float = 1.0
     input_mode: str = "cdp"
     move_style: str = "mixed"
     play_as: str = "auto"
+    no_play: bool = False
+
+    def __post_init__(self) -> None:
+        # NOTE: When running in 'human' mode, the default input_mode must be 'os' (native OS cursor)
+        # instead of 'cdp' (simulated CDP synthetic input events) to ensure realistic fair play interaction.
+        if self.mode == "human" and self.input_mode == "cdp":
+            object.__setattr__(self, "input_mode", "os")
 
     def resolved_chrome_path(self) -> Path:
         """Return the resolved Path for the Chrome executable."""
@@ -51,6 +60,7 @@ class Settings:
 
 def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
     """Validate and filter raw JSON config dictionary."""
+
     valid_field_names = {f.name for f in fields(Settings)}
     cleaned: dict[str, Any] = {}
 
@@ -105,16 +115,25 @@ def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
             raise ConfigError(f"Invalid speed: {speed!r}. Must be between 0.1 and 5.0.")
         cleaned["speed"] = float(speed)
 
+    if "no_play" in cleaned:
+        cleaned["no_play"] = bool(cleaned["no_play"])
+
     for str_field in ("chrome_path", "stockfish_path", "profile_dir", "start_url"):
         if str_field in cleaned:
             val = cleaned[str_field]
             if not isinstance(val, str) or not val.strip():
                 raise ConfigError(f"Field {str_field!r} must be a non-empty string.")
 
+    if "mode" in cleaned:
+        mode_val = cleaned["mode"]
+        if mode_val not in VALID_MODES:
+            raise ConfigError(f"Invalid mode: {mode_val!r}. Must be one of {sorted(VALID_MODES)}.")
+
     if "start_url" in cleaned:
         from chess_autoplayer.chrome.page import is_allowed_url
 
-        if not is_allowed_url(cleaned["start_url"]):
+        mode_val = cleaned.get("mode", Settings.mode)
+        if not is_allowed_url(cleaned["start_url"], mode=mode_val):
             logger.warning(
                 "Configured start_url %r is not an allowed URL; using default.",
                 cleaned["start_url"],

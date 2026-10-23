@@ -1,9 +1,11 @@
 """Tests for chess_autoplayer.board.state."""
 
+from typing import Any
+
 import chess
 import pytest
 
-from chess_autoplayer.board.snapshot import PieceInfo, Rect, Snapshot, WindowInfo
+from chess_autoplayer.board.snapshot import ClockInfo, Clocks, PieceInfo, Rect, Snapshot, WindowInfo
 from chess_autoplayer.board.state import GameState, StateError
 
 
@@ -14,6 +16,8 @@ def make_snapshot(
     flipped_class: bool = False,
     game_over: bool = False,
     game_over_text: str | None = None,
+    our_color_hint: str | None = None,
+    clocks: Any = None,
 ) -> Snapshot:
     """Helper to construct a typed Snapshot."""
     if pieces is None:
@@ -49,6 +53,8 @@ def make_snapshot(
         device_pixel_ratio=1.0,
         window=WindowInfo(0, 0, 1000, 800, 1000, 800),
         dragging=False,
+        our_color_hint=our_color_hint,
+        clocks=clocks if clocks is not None else Clocks(),
     )
 
 
@@ -271,3 +277,18 @@ def test_state_board_not_found_raises_state_error() -> None:
     )
     with pytest.raises(StateError, match="No board found"):
         GameState.from_snapshot(snap)
+
+
+def test_state_clock_seconds() -> None:
+    from chess_autoplayer.board.snapshot import Clocks
+
+    clocks = Clocks(
+        white=ClockInfo(text="05:00", seconds=300.0, ticking=True, color="w"),
+        black=ClockInfo(text="04:30", seconds=270.0, ticking=False, color="b"),
+    )
+    snap = make_snapshot(moves=["e4"], our_color_hint="w")
+    object.__setattr__(snap, "clocks", clocks)
+    state = GameState.from_snapshot(snap)
+    assert state.our_color == chess.WHITE
+    assert state.our_clock_seconds == 300.0
+    assert state.opponent_clock_seconds == 270.0

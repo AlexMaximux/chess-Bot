@@ -16,9 +16,11 @@ class FakePageCDPServer:
         self.url = ""
         self.session_id = "session_page_1"
         self.target_id = "target_tab_1"
-        self._server = None
+        self._server: Any = None
         self.eval_call_count = 0
         self.last_eval_context_id: int | None = None
+        self.current_url: str = "https://www.chess.com/play/computer"
+        self.navigated_urls: list[str] = []
 
     async def start(self) -> None:
         async def handler(websocket: ServerConnection) -> None:
@@ -58,6 +60,11 @@ class FakePageCDPServer:
                         )
                     elif method == "Page.enable":
                         await websocket.send(json.dumps({"id": msg_id, "result": {}}))
+                    elif method == "Page.navigate":
+                        nav_url = params.get("url", "")
+                        self.navigated_urls.append(nav_url)
+                        self.current_url = nav_url
+                        await websocket.send(json.dumps({"id": msg_id, "result": {}}))
                     elif method == "Page.getFrameTree":
                         await websocket.send(
                             json.dumps(
@@ -87,7 +94,21 @@ class FakePageCDPServer:
                         self.eval_call_count += 1
                         self.last_eval_context_id = params.get("contextId")
                         expr = params.get("expression")
-                        if expr == "throw_error":
+                        if expr == "window.location.href":
+                            await websocket.send(
+                                json.dumps(
+                                    {
+                                        "id": msg_id,
+                                        "result": {
+                                            "result": {
+                                                "type": "string",
+                                                "value": self.current_url,
+                                            }
+                                        },
+                                    }
+                                )
+                            )
+                        elif expr == "throw_error":
                             await websocket.send(
                                 json.dumps(
                                     {
@@ -143,7 +164,7 @@ class CustomTargetsServer:
     def __init__(self, target_infos: list[dict[str, Any]]) -> None:
         self.target_infos = target_infos
         self.created_urls: list[str] = []
-        self._server = None
+        self._server: Any = None
         self.url = ""
 
     async def start(self) -> None:
@@ -288,3 +309,95 @@ def test_find_or_create_tab_creates_new_when_no_matching_tabs() -> None:
             await server.stop()
 
     asyncio.run(run())
+
+
+def test_find_or_create_tab_human_mode_allows_online() -> None:
+    async def run() -> None:
+        targets = [
+            {
+                "targetId": "online_game_tab",
+                "type": "page",
+                "url": "https://www.chess.com/play/online",
+            }
+        ]
+        server = CustomTargetsServer(targets)
+        await server.start()
+        client = await CDPClient.connect(server.url)
+        try:
+            target_id = await find_or_create_chess_tab(
+                client, start_url="https://www.chess.com/play/online", mode="human"
+            )
+            assert target_id == "online_game_tab"
+            assert server.created_urls == []
+        finally:
+            await client.close()
+            await server.stop()
+
+    asyncio.run(run())
+
+
+def test_find_or_create_tab_prioritizes_start_url_match() -> None:
+    async def run() -> None:
+        targets = [
+            {
+                "targetId": "computer_tab",
+                "type": "page",
+                "url": "https://www.chess.com/play/computer",
+            },
+            {
+                "targetId": "online_tab",
+                "type": "page",
+                "url": "https://www.chess.com/play/online",
+            },
+        ]
+        server = CustomTargetsServer(targets)
+        await server.start()
+        client = await CDPClient.connect(server.url)
+        try:
+            target_id = await find_or_create_chess_tab(
+                client, start_url="https://www.chess.com/play/online", mode="human"
+            )
+            assert target_id == "online_tab"
+        finally:
+            await client.close()
+            await server.stop()
+
+    asyncio.run(run())
+
+
+def test_chess_page_ensure_start_url() -> None:
+    async def run() -> None:
+        server = FakePageCDPServer()
+        server.current_url = "https://www.chess.com/play/computer"
+        await server.start()
+        client = await CDPClient.connect(server.url)
+        try:
+            page = await ChessPage.attach(client, target_id="target_tab_1")
+
+            # 1. When on /play/computer and start_url is /play/online, it navigates
+            navigated = await page.ensure_start_url(
+                "https://www.chess.com/play/online", delay=0.0
+            )
+            assert navigated is True
+            assert server.navigated_urls == ["https://www.chess.com/play/online"]
+
+            # 2. When already on /play/online, it does not navigate
+            navigated2 = await page.ensure_start_url(
+                "https://www.chess.com/play/online", delay=0.0
+            )
+            assert navigated2 is False
+            assert len(server.navigated_urls) == 1
+
+            # 3. When in an active game (/game/live), it does not navigate
+            server.current_url = "https://www.chess.com/game/live/123456"
+            navigated3 = await page.ensure_start_url(
+                "https://www.chess.com/play/online", delay=0.0
+            )
+            assert navigated3 is False
+            assert len(server.navigated_urls) == 1
+        finally:
+            await client.close()
+            await server.stop()
+
+    asyncio.run(run())
+

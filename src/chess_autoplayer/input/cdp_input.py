@@ -9,7 +9,7 @@ from typing import Any, Protocol
 import chess
 
 from chess_autoplayer.board.geometry import square_to_point
-from chess_autoplayer.board.snapshot import PromotionOption
+from chess_autoplayer.board.snapshot import PromotionOption, Rect
 from chess_autoplayer.human.mouse import generate_drag_path, generate_hover_path
 from chess_autoplayer.input.base import MoveContext
 
@@ -217,6 +217,35 @@ class CDPInput:
 
         cur_pos = self.last_pos if self.last_pos is not None else (cx, cy)
         path = generate_hover_path(cur_pos, (cx, cy), square_size=target_opt.rect.width, rng=r)
+        for pt in path:
+            if pt.dt_ms > 0:
+                await asyncio.sleep(pt.dt_ms / 1000.0)
+            await self._dispatch("mouseMoved", pt.x, pt.y, button="none", buttons=0)
+        self.last_pos = (cx, cy)
+
+        await asyncio.sleep(r.uniform(0.040, 0.100))
+        await self._dispatch("mousePressed", cx, cy, button="left", buttons=1, click_count=1)
+        await asyncio.sleep(r.uniform(0.030, 0.070))
+        await self._dispatch("mouseReleased", cx, cy, button="left", buttons=0, click_count=1)
+        return True
+
+    async def click_rect(
+        self,
+        rect: Rect,
+        rng: random.Random | None = None,
+    ) -> bool:
+        """Click on the center of the specified rectangle with human hover and click."""
+        if rect.width <= 0 or rect.height <= 0:
+            return False
+
+        r = rng if rng is not None else random.Random()
+        cx = rect.x + rect.width / 2.0
+        cy = rect.y + rect.height / 2.0
+
+        cur_pos = self.last_pos if self.last_pos is not None else (cx, cy)
+        path = generate_hover_path(
+            cur_pos, (cx, cy), square_size=min(rect.width, rect.height), rng=r
+        )
         for pt in path:
             if pt.dt_ms > 0:
                 await asyncio.sleep(pt.dt_ms / 1000.0)

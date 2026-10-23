@@ -6,7 +6,7 @@ from typing import Protocol
 
 import chess
 
-from chess_autoplayer.board.snapshot import PromotionOption, Rect
+from chess_autoplayer.board.snapshot import PromotionOption, Rect, WindowInfo
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class MoveContext:
     promotion_piece: str | None = None
     rng: random.Random | None = None
     promotion_options: list[PromotionOption] = field(default_factory=list)
+    window: WindowInfo | None = None
 
 
 class MoveInput(Protocol):
@@ -30,6 +31,10 @@ class MoveInput(Protocol):
 
     async def click_promotion(self, piece: str, options: list[PromotionOption]) -> bool:
         """Click the chosen piece option in the promotion picker dialog."""
+        ...
+
+    async def click_rect(self, rect: Rect, rng: random.Random | None = None) -> bool:
+        """Click on the given bounding rectangle."""
         ...
 
     async def close(self) -> None:

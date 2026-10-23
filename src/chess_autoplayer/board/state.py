@@ -159,3 +159,42 @@ class GameState:
         if self.board.move_stack:
             return self.board.peek()
         return None
+
+    @property
+    def our_clock_seconds(self) -> float | None:
+        """Remaining seconds on our clock, if detected in DOM snapshot."""
+        if not self.snapshot.clocks:
+            return None
+        clock = (
+            self.snapshot.clocks.white
+            if self.our_color == chess.WHITE
+            else self.snapshot.clocks.black
+        )
+        if clock and clock.seconds is not None:
+            return clock.seconds
+        # Fallback to bottom clock if white/black clock couldn't be definitively determined
+        if self.snapshot.clocks.bottom and self.snapshot.clocks.bottom.seconds is not None:
+            return self.snapshot.clocks.bottom.seconds
+        return None
+
+    @property
+    def opponent_clock_seconds(self) -> float | None:
+        """Remaining seconds on opponent's clock, if detected in DOM snapshot."""
+        if not self.snapshot.clocks:
+            return None
+        clock = (
+            self.snapshot.clocks.black
+            if self.our_color == chess.WHITE
+            else self.snapshot.clocks.white
+        )
+        if clock and clock.seconds is not None:
+            return clock.seconds
+        # Fallback to top clock
+        if self.snapshot.clocks.top and self.snapshot.clocks.top.seconds is not None:
+            return self.snapshot.clocks.top.seconds
+        return None
+
+    @property
+    def increment_seconds(self) -> float:
+        """Increment per move in seconds, if detected or configured (default 0.0)."""
+        return 0.0

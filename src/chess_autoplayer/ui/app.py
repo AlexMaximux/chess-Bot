@@ -363,11 +363,14 @@ class AutoplayerApp:
             try:
                 ws_url = await launch_or_attach_chrome(self.settings)
                 cdp = await CDPClient.connect(ws_url)
-                target_id = await find_or_create_chess_tab(cdp, self.settings.start_url)
+                target_id = await find_or_create_chess_tab(
+                    cdp, self.settings.start_url, mode=self.settings.mode
+                )
                 page = await ChessPage.attach(cdp, target_id)
+                await page.ensure_start_url(self.settings.start_url)
                 await page.bring_to_front()
                 await cdp.close()
-                self._event_queue.put("Chrome ready on /play/computer")
+                self._event_queue.put(f"Chrome ready on {self.settings.start_url}")
             except Exception as exc:
                 logger.error("Open Chrome error: %s", exc)
                 self._event_queue.put(ErrorEvent(f"Chrome error: {exc}"))
@@ -389,8 +392,11 @@ class AutoplayerApp:
             try:
                 ws_url = await launch_or_attach_chrome(self.settings)
                 self._cdp = await CDPClient.connect(ws_url)
-                target_id = await find_or_create_chess_tab(self._cdp, self.settings.start_url)
+                target_id = await find_or_create_chess_tab(
+                    self._cdp, self.settings.start_url, mode=self.settings.mode
+                )
                 self._page = await ChessPage.attach(self._cdp, target_id)
+                await self._page.ensure_start_url(self.settings.start_url)
                 await self._page.bring_to_front()
 
                 # Build input handler
@@ -412,8 +418,11 @@ class AutoplayerApp:
                     ws = await launch_or_attach_chrome(self.settings)
                     new_cdp = await CDPClient.connect(ws)
                     self._cdp = new_cdp
-                    tid = await find_or_create_chess_tab(new_cdp, self.settings.start_url)
+                    tid = await find_or_create_chess_tab(
+                        new_cdp, self.settings.start_url, mode=self.settings.mode
+                    )
                     new_pg = await ChessPage.attach(new_cdp, tid)
+                    await new_pg.ensure_start_url(self.settings.start_url)
                     self._page = new_pg
                     new_inp: MoveInput = (
                         OSInput(new_pg)

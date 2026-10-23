@@ -134,3 +134,36 @@ def test_parse_invalid_piece_square_raises() -> None:
 def test_parse_non_dict_input_raises() -> None:
     with pytest.raises(SnapshotError, match="object"):
         parse_snapshot("not a dict")
+
+
+def test_parse_snapshot_with_clocks_and_structured_moves() -> None:
+    raw = sample_valid_raw_snapshot()
+    raw["clocks"] = {
+        "top": {"text": "09:45", "seconds": 585.0, "ticking": False, "color": "b"},
+        "bottom": {"text": "04:32.5", "seconds": 272.5, "ticking": True, "color": "w"},
+        "white": {"text": "04:32.5", "seconds": 272.5, "ticking": True, "color": "w"},
+        "black": {"text": "09:45", "seconds": 585.0, "ticking": False, "color": "b"},
+    }
+    raw["structuredMoves"] = [
+        {"ply": 1, "moveNumber": 1, "color": "w", "san": "e4", "time": "09:58"},
+        {"ply": 2, "moveNumber": 1, "color": "b", "san": "e5", "time": "09:55"},
+    ]
+    raw["ourColorHint"] = "w"
+
+    snap = parse_snapshot(raw)
+    assert snap.clocks.top is not None
+    assert snap.clocks.top.seconds == 585.0
+    assert snap.clocks.bottom is not None
+    assert snap.clocks.bottom.seconds == 272.5
+    assert snap.clocks.bottom.ticking is True
+    assert snap.our_clock is not None
+    assert snap.our_clock.seconds == 272.5
+
+    assert len(snap.structured_moves) == 2
+    assert snap.structured_moves[0].san == "e4"
+    assert snap.structured_moves[0].ply == 1
+    assert snap.structured_moves[0].color == "w"
+    assert snap.structured_moves[0].time == "09:58"
+    assert snap.structured_moves[1].san == "e5"
+    assert snap.structured_moves[1].ply == 2
+    assert snap.structured_moves[1].color == "b"

@@ -149,11 +149,31 @@ def select_move(
         chosen = min(pool, key=lambda c: best_score - c.score_cp)
         reason = f"{prefix}_best_score"
     else:
-        # Softmax over -loss / temperature
-        pool_losses = [best_score - c.score_cp for c in pool]
-        weights = [math.exp(-loss / profile.temperature) for loss in pool_losses]
-        chosen = r.choices(pool, weights=weights, k=1)[0]
-        reason = f"{prefix}_softmax"
+        # NOTE: Close position human candidate selection - در پوزیسیون‌هایی که اختلاف ارزیابی بین حرکت اول و دوم
+        # کمتر از ۰.۵ پیاده (<50 cp) است، یک انسان با رتبه متوسط-بالا تفاوت ناچیز محاسباتی را حس نمی‌کند و با احتمال
+        # ۵٪ تا ۱۵٪ حرکت دوم یا سوم را انتخاب می‌کند، بدون اینکه افت فاحش یا بلاندر ایجاد کند.
+        eval_diff_cp = (
+            abs(candidates[0].score_cp - candidates[1].score_cp) if len(candidates) >= 2 else 999
+        )
+        alt_candidates = [c for c in pool if c != candidates[0] and (candidates.index(c) in (1, 2))]
+        alt_chosen = False
+        if eval_diff_cp < 50 and alt_candidates and not is_blunder:
+            alt_chance = r.uniform(0.05, 0.15)
+            if r.random() < alt_chance:
+                alt_losses = [best_score - c.score_cp for c in alt_candidates]
+                temp = max(10.0, profile.temperature)
+                alt_weights = [math.exp(-loss / temp) for loss in alt_losses]
+                chosen = r.choices(alt_candidates, weights=alt_weights, k=1)[0]
+                reason = f"{prefix}_close_position_alt"
+                alt_chosen = True
+
+        if not alt_chosen:
+            # NOTE: Softmax temperature selection - توزیع سافت‌مکس روی زیان امتیاز حرکات (loss)، شبیه‌ساز
+            # ترجیح شهودی انسان بین کاندیداهای مطلوب است تا از بازی کامپیوتری و تکراری با ۱۰۰٪ بهترین حرکت پرهیز شود.
+            pool_losses = [best_score - c.score_cp for c in pool]
+            weights = [math.exp(-loss / profile.temperature) for loss in pool_losses]
+            chosen = r.choices(pool, weights=weights, k=1)[0]
+            reason = f"{prefix}_softmax"
 
     idx = candidates.index(chosen)
     return Decision(

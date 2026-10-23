@@ -38,3 +38,36 @@ def test_allowed_urls(url: str) -> None:
 )
 def test_rejected_urls(url: str) -> None:
     assert is_allowed_url(url) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.chess.com/play/computer",
+        "https://www.chess.com/play/online",
+        "https://www.chess.com/live",
+        "https://www.chess.com/game/live",
+        "https://www.chess.com/game/live/1234567890",
+        "https://chess.com/play/online",
+        "https://chess.com/game/live/1234567890",
+        "https://www.chess.com/puzzles",
+    ],
+)
+def test_human_mode_allowed_urls(url: str) -> None:
+    assert is_allowed_url(url, mode="human") is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://www.chess.com/play/online",  # HTTP rejected
+        "http://chess.com/live",  # HTTP rejected
+        "https://evil-chess.com/play/online",  # Phishing rejected
+        "https://www.chess.com.attacker.com/live",  # Attacker subdomain rejected
+        "https://www.chess.com:8443/play/online",  # Non-standard port rejected
+        "",
+        "not-a-url",
+    ],
+)
+def test_human_mode_rejected_urls(url: str) -> None:
+    assert is_allowed_url(url, mode="human") is False

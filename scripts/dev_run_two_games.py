@@ -56,7 +56,9 @@ async def main() -> int:
     settings = load_config()
     ws_url = await launch_or_attach_chrome(settings)
     cdp = await CDPClient.connect(ws_url)
-    target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+    target_id = await find_or_create_chess_tab(
+        cdp, settings.start_url, mode=settings.mode
+    )
     page = await ChessPage.attach(cdp, target_id)
 
     # Ensure a game can start: if 'Play' button is visible, click it

@@ -128,3 +128,92 @@ def test_speed_multiplier() -> None:
     t_normal = compute_think_time(board, candidates, chosen, speed=1.0, rng=random.Random(10))
     t_fast = compute_think_time(board, candidates, chosen, speed=2.0, rng=random.Random(10))
     assert abs(t_normal / 2.0 - t_fast) < 1e-4
+
+
+def test_hard_floor_and_panic_mode() -> None:
+    board = chess.Board()
+    candidates = make_dummy_candidates(["e2e4", "d2d4"])
+    chosen = candidates[0].move
+
+    # High speed (e.g. 100.0) must still strictly respect the 0.30s default hard floor
+    for _ in range(50):
+        t = compute_think_time(board, candidates, chosen, speed=100.0)
+        assert t >= 0.30
+
+    # Panic mode: clock < 10s and increment == 0 -> floor opens down to 0.12s
+    panic_times = []
+    for _ in range(100):
+        t = compute_think_time(
+            board,
+            candidates,
+            chosen,
+            clock_seconds=2.0,
+            increment_seconds=0.0,
+            speed=50.0,
+        )
+        assert t >= 0.12
+        panic_times.append(t)
+    assert any(t < 0.30 for t in panic_times)
+
+    # When increment > 0 (even with 2s on clock), non-panic floor 0.30s is enforced
+    for _ in range(50):
+        t = compute_think_time(
+            board,
+            candidates,
+            chosen,
+            clock_seconds=2.0,
+            increment_seconds=1.0,
+            speed=50.0,
+        )
+        assert t >= 0.30
+
+
+def test_panic_mode_preserves_human_jitter() -> None:
+    board = chess.Board()
+    candidates = make_dummy_candidates(["e2e4", "d2d4"])
+    chosen = candidates[0].move
+    rng = random.Random(42)
+
+    # In panic mode (e.g. clock 5s, no increment, speed 1.0)
+    times = [
+        compute_think_time(
+            board,
+            candidates,
+            chosen,
+            clock_seconds=5.0,
+            increment_seconds=0.0,
+            speed=1.0,
+            rng=rng,
+        )
+        for _ in range(50)
+    ]
+    # All must obey panic floor
+    for t in times:
+        assert t >= 0.12
+        assert t <= 1.5
+    # Must preserve human jitter (not all identical values)
+    assert len({round(t, 4) for t in times}) > 10
+
+
+def test_increment_increases_budget() -> None:
+    board = chess.Board()
+    candidates = make_dummy_candidates(["e2e4", "d2d4"])
+    chosen = candidates[0].move
+    rng1 = random.Random(123)
+    rng2 = random.Random(123)
+
+    # 10s clock with 0 increment vs 10s clock with 3s increment
+    t_no_inc = [
+        compute_think_time(
+            board, candidates, chosen, clock_seconds=10.0, increment_seconds=0.0, rng=rng1
+        )
+        for _ in range(50)
+    ]
+    t_with_inc = [
+        compute_think_time(
+            board, candidates, chosen, clock_seconds=10.0, increment_seconds=3.0, rng=rng2
+        )
+        for _ in range(50)
+    ]
+    # Average think time with 3s increment should be noticeably higher
+    assert sum(t_with_inc) / len(t_with_inc) > sum(t_no_inc) / len(t_no_inc)

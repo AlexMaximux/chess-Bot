@@ -35,6 +35,36 @@ logger = logging.getLogger(__name__)
 
 ReconnectFactory = Callable[[], Awaitable[tuple[ChessPage, MoveInput]]]
 
+RESIGN_MIN_PLY: int = 24  # At least 12 full moves
+RESIGN_EVAL_CP: int = -800  # Down 8 pawns or more, or forced mate against us
+RESIGN_MAX_CLOCK_S: float = 30.0  # Clock under 30 seconds
+
+
+def should_resign(
+    ply: int,
+    eval_cp: int,
+    mate_score: int | None = None,
+    clock_seconds: float | None = None,
+    *,
+    min_ply: int = RESIGN_MIN_PLY,
+    eval_threshold_cp: int = RESIGN_EVAL_CP,
+    clock_threshold_s: float = RESIGN_MAX_CLOCK_S,
+) -> bool:
+    """Return True if position is completely lost and clock is low, warranting resignation.
+
+    Thresholds:
+    - min_ply: 24 (at least move 12)
+    - eval_threshold_cp: -800 (down 8 pawns or more, or mate against us)
+    - clock_threshold_s: 30.0 (less than 30 seconds remaining)
+    """
+    if ply < min_ply:
+        return False
+    if clock_seconds is None or clock_seconds > clock_threshold_s:
+        return False
+    if mate_score is not None and mate_score < 0:
+        return True
+    return eval_cp <= eval_threshold_cp
+
 
 class BotController:
     """Async state machine controlling autonomous chess games."""
@@ -55,6 +85,8 @@ class BotController:
         self.settings = settings
         self.event_callback = event_callback
         self.rng = rng if rng is not None else random.Random()
+        if hasattr(self.engine, "rng"):
+            self.engine.rng = self.rng
         self.reconnect_factory = reconnect_factory
 
         self.state = BotState.IDLE
@@ -84,9 +116,20 @@ class BotController:
         self._override_style: str | None = None
         self._game_over_latch: bool = False
         self._game_over_final_ply: int = -1
+        self._rematch_clicked: bool = False
+        self._game_over_time: float = 0.0
+        self._game_over_delay: float = 1.5
+        self._stay_on_game_over: bool = False
+        self._current_game_url: str | None = None
+        self._last_seen_url: str | None = None
         self.verify_timeout: float = 3.0
         self.pieces_fallback_wait: float = 2.0
         self.backoffs: list[float] = [1.0, 2.0, 5.0, 10.0]
+        self.resign_min_ply: int = RESIGN_MIN_PLY
+        self.resign_eval_threshold_cp: int = RESIGN_EVAL_CP
+        self.resign_clock_threshold_s: float = RESIGN_MAX_CLOCK_S
+        self._last_start_game_click_time: float = 0.0
+        self._start_game_clicked: bool = False
 
     @property
     def is_paused(self) -> bool:
@@ -108,6 +151,99 @@ class BotController:
     @property
     def input_mode(self) -> str:
         return self._input_mode
+
+    @property
+    def mode(self) -> str:
+        return self.settings.mode
+
+    def is_allowed_url(self, url: str) -> bool:
+        """Check if URL is allowed based on configured mode."""
+        return is_allowed_url(url, mode=self.settings.mode)
+
+    @staticmethod
+    def _is_new_game_url_transition(old_url: str | None, new_url: str) -> bool:
+        """Return True if transition from old_url to new_url represents a new game."""
+        if not old_url or old_url == new_url:
+            return False
+        try:
+            from urllib.parse import urlsplit
+
+            old_path = urlsplit(old_url).path.strip("/").split("/")
+            new_path = urlsplit(new_url).path.strip("/").split("/")
+        except Exception:
+            return False
+
+        # If old was a specific live game (/game/live/<id1>) and new is another (/game/live/<id2>)
+        if len(old_path) >= 3 and old_path[0] == "game" and old_path[1] == "live":
+            if len(new_path) >= 3 and new_path[0] == "game" and new_path[1] == "live":
+                return old_path[2] != new_path[2]
+            return True
+
+        return False
+
+    def _is_online_game_active(self, snapshot: Snapshot) -> bool:
+        """Check if a game is active and ready to be played (not waiting in lobby)."""
+        # If any moves were already made, game is active
+        if len(snapshot.moves) > 0:
+            return True
+        # In bot mode, untimed computer play does not require clocks
+        if self.settings.mode != "human":
+            return True
+        # Playing on /play/computer is against the computer and can be untimed
+        url = (snapshot.url or "").lower()
+        if "/play/computer" in url:
+            return True
+
+        # In human mode on online play:
+        # If a Start Game / Play button is visible in the lobby, we are still waiting to start!
+        if snapshot.has_start_button:
+            return False
+
+        # If live game controls (Resign/Draw button or move list) are present, game has started!
+        if snapshot.has_resign_button or snapshot.has_draw_button or snapshot.has_move_list:
+            return True
+
+        # If any clock is actively ticking, match has started!
+        for c in (
+            snapshot.clocks.top,
+            snapshot.clocks.bottom,
+            snapshot.clocks.white,
+            snapshot.clocks.black,
+        ):
+            if c is not None and c.ticking:
+                return True
+
+        # If both top and bottom clocks exist with valid text/seconds and no start button is present
+        top_c = snapshot.clocks.top
+        bot_c = snapshot.clocks.bottom
+        if top_c is not None and bot_c is not None:
+            if (top_c.text is not None or top_c.seconds is not None) and (
+                bot_c.text is not None or bot_c.seconds is not None
+            ):
+                return True
+
+        return False
+
+    def _reset_game_state(self, new_url: str | None = None) -> None:
+        """Reset per-game state on new game detection."""
+        self._game_over_latch = False
+        self._game_over_final_ply = -1
+        self._rematch_clicked = False
+        self._start_game_clicked = False
+        self._last_start_game_click_time = 0.0
+        self._game_over_time = 0.0
+        self._game_over_delay = 1.5
+        self._stay_on_game_over = False
+        self._last_seen_ply = -1
+        self._retry_count = 0
+        self._override_style = None
+        self._stable_fen_count = 0
+        self._last_stable_fen = None
+        self._stable_fen_time = 0.0
+        self._pieces_source_start_time = None
+        if new_url is not None:
+            self._current_game_url = new_url
+        self._transition(BotState.IDLE, "New game detected")
 
     def _emit(self, event: BotEvent) -> None:
         """Dispatch a typed event to callback and logger."""
@@ -321,19 +457,66 @@ class BotController:
 
             # 1. URL Guard check first
             current_url = await self.page.url()
-            if not is_allowed_url(current_url):
+            if not self.is_allowed_url(current_url):
                 self._transition(
                     BotState.BLOCKED_URL,
-                    f"Guard active: URL {current_url!r} is not an allowed computer play path",
+                    f"Guard active: URL {current_url!r} is not an allowed play path",
                 )
                 await asyncio.sleep(0.25 + self.rng.uniform(-0.05, 0.05))
                 continue
+
+            # Detect URL transitions between different games
+            if self._last_seen_url is not None and current_url != self._last_seen_url:
+                if self._game_over_latch or self._is_new_game_url_transition(
+                    self._current_game_url, current_url
+                ):
+                    logger.info(
+                        "URL transition between games detected (%s -> %s); resetting per-game state",
+                        self._last_seen_url,
+                        current_url,
+                    )
+                    self._reset_game_state(current_url)
+                else:
+                    self._current_game_url = current_url
+
+            self._last_seen_url = current_url
+            if self._current_game_url is None:
+                self._current_game_url = current_url
 
             # 2. Fetch DOM snapshot
             snapshot = await self._fetch_snapshot_with_retry()
             if snapshot is None or not snapshot.found:
                 self._transition(BotState.WAITING_FOR_GAME, "Waiting for chess board to appear")
                 await asyncio.sleep(0.25 + self.rng.uniform(-0.05, 0.05))
+                continue
+
+            # 2.1 In human mode (online play), verify game has actually started before thinking/moving
+            if not self._is_online_game_active(snapshot):
+                if self.state != BotState.WAITING_FOR_GAME:
+                    self._transition(
+                        BotState.WAITING_FOR_GAME,
+                        "In online lobby; waiting for match to start",
+                    )
+
+                # If in human mode and not in no-play mode, auto-click "Start Game" / "Play" if present
+                if self.settings.mode == "human" and not self.settings.no_play and snapshot.has_start_button:
+                    now = time.monotonic()
+                    if now - self._last_start_game_click_time > 3.0:
+                        self._last_start_game_click_time = now
+                        clicked = await self._click_start_game(snapshot)
+                        if clicked:
+                            self._start_game_clicked = True
+                            logger.info(
+                                "Clicked 'Start Game' button in lobby; entering matchmaking queue"
+                            )
+                            self._emit(
+                                StatusEvent(
+                                    state=BotState.WAITING_FOR_GAME,
+                                    message="Clicked Start Game; waiting for opponent to connect...",
+                                )
+                            )
+
+                await asyncio.sleep(0.4 + self.rng.uniform(-0.05, 0.05))
                 continue
 
             # 3. State reconstruction
@@ -348,7 +531,16 @@ class BotController:
             is_game_finished = snapshot.game_over or game_state.board.is_game_over()
             if is_game_finished and not self._game_over_latch:
                 self._game_over_latch = True
+                self._game_over_time = time.monotonic()
+                self._game_over_delay = self.rng.uniform(1.0, 3.0)
+                # Occasional lingering: ~20% probability to stay on game over screen without auto-clicking
+                self._stay_on_game_over = self.rng.random() < 0.20
+                self._rematch_clicked = False
                 self._game_over_final_ply = game_state.ply
+                if self._stay_on_game_over:
+                    logger.info(
+                        "Lingering on game-over screen (simulating human reviewing the final position)"
+                    )
                 text = snapshot.game_over_text or ""
                 if not text:
                     if game_state.board.is_checkmate():
@@ -368,6 +560,7 @@ class BotController:
                 # - move list empty or shorter than at game end
                 # - ply lower than final ply
                 # - standard starting position
+                # - URL change between games
                 moves_reset = (
                     len(snapshot.moves) < self._game_over_final_ply
                     if self._game_over_final_ply >= 0
@@ -379,27 +572,38 @@ class BotController:
                     else False
                 )
                 start_fen = game_state.board.fen().startswith(chess.STARTING_BOARD_FEN)
+                url_changed = (
+                    self._current_game_url is not None and current_url != self._current_game_url
+                )
 
-                if (
-                    len(snapshot.moves) == 0
-                    or moves_reset
-                    or ply_reset
-                    or (start_fen and not is_game_finished)
-                ):
+                is_reset_condition = not is_game_finished and (
+                    len(snapshot.moves) == 0 or moves_reset or ply_reset or start_fen
+                )
+
+                if url_changed or is_reset_condition:
                     logger.info("New game detected; resetting per-game state")
-                    self._game_over_latch = False
-                    self._game_over_final_ply = -1
-                    self._last_seen_ply = -1
-                    self._retry_count = 0
-                    self._override_style = None
-                    self._stable_fen_count = 0
-                    self._last_stable_fen = None
-                    self._stable_fen_time = 0.0
-                    self._pieces_source_start_time = None
-                    self._transition(BotState.IDLE, "New game detected")
+                    self._reset_game_state(current_url)
                 else:
                     if self.state != BotState.GAME_OVER:
                         self._transition(BotState.GAME_OVER, "Game finished (waiting for new game)")
+
+                    # Auto-click New Game or Rematch button after human delay (1 to 3 seconds)
+                    # unless lingering on the final screen or running in no-play mode
+                    now = time.monotonic()
+                    if (
+                        not self.settings.no_play
+                        and not self._stay_on_game_over
+                        and not self._rematch_clicked
+                        and (now - self._game_over_time) >= self._game_over_delay
+                    ):
+                        clicked = await self._click_new_game_or_rematch(snapshot)
+                        if clicked:
+                            self._rematch_clicked = True
+                            logger.info(
+                                "Auto-clicked New Game / Rematch button after %.2fs delay",
+                                self._game_over_delay,
+                            )
+
                     await asyncio.sleep(0.5)
                     continue
 
@@ -501,12 +705,54 @@ class BotController:
                 continue
 
             decision = select_move(game_state.board, lines, profile=profile, rng=self.rng)
+
+            # Check for resignation if position is completely lost and clock is low
+            best_candidate = decision.candidates[0]
+            if should_resign(
+                ply=game_state.ply,
+                eval_cp=best_candidate.score_cp,
+                mate_score=best_candidate.mate_score,
+                clock_seconds=game_state.our_clock_seconds,
+                min_ply=self.resign_min_ply,
+                eval_threshold_cp=self.resign_eval_threshold_cp,
+                clock_threshold_s=self.resign_clock_threshold_s,
+            ):
+                if self.settings.no_play:
+                    logger.info(
+                        "[NO-PLAY] Spectator mode active: position is lost (eval=%+d cp, clock=%.1fs) but resignation skipped",
+                        best_candidate.score_cp,
+                        game_state.our_clock_seconds or 0.0,
+                    )
+                    await asyncio.sleep(1.0)
+                    continue
+
+                logger.info(
+                    "Resigning game on ply %d (eval=%+d cp, mate=%s, clock=%.1fs)",
+                    game_state.ply,
+                    best_candidate.score_cp,
+                    best_candidate.mate_score,
+                    game_state.our_clock_seconds or 0.0,
+                )
+                await asyncio.sleep(self.rng.uniform(0.5, 1.2))
+                await self._resign_game()
+                self._transition(BotState.GAME_OVER, "Resigned lost position")
+                self._emit(GameOverEvent(text="Resigned lost position"))
+                self._game_over_latch = True
+                self._game_over_time = time.monotonic()
+                self._game_over_delay = self.rng.uniform(1.0, 3.0)
+                self._stay_on_game_over = self.rng.random() < 0.20
+                self._rematch_clicked = False
+                self._game_over_final_ply = game_state.ply
+                continue
+
             think_time = compute_think_time(
                 board=game_state.board,
                 candidates=decision.candidates,
                 chosen_move=decision.move,
                 ply=game_state.ply,
                 last_move=game_state.last_move,
+                clock_seconds=game_state.our_clock_seconds,
+                increment_seconds=game_state.increment_seconds,
                 speed=self._speed,
                 rng=self.rng,
             )
@@ -534,13 +780,18 @@ class BotController:
 
                 # Re-check URL guard during thinking wait
                 check_url = await self.page.url()
-                if not is_allowed_url(check_url):
+                if not self.is_allowed_url(check_url):
                     self._transition(
                         BotState.BLOCKED_URL,
-                        f"Guard active: URL {check_url!r} is not an allowed computer play path",
+                        f"Guard active: URL {check_url!r} is not an allowed play path",
                     )
                     move_abandoned = True
                     break
+
+                if self._last_seen_url is not None and check_url != self._last_seen_url:
+                    if not self._is_new_game_url_transition(self._current_game_url, check_url):
+                        self._current_game_url = check_url
+                    self._last_seen_url = check_url
 
                 step_sleep = min(0.25, remaining_wait - (time.monotonic() - wait_start))
                 if step_sleep > 0:
@@ -565,14 +816,23 @@ class BotController:
 
             # 9. Pre-move URL guard check immediately before move execution
             pre_move_url = await self.page.url()
-            if not is_allowed_url(pre_move_url):
+            if not self.is_allowed_url(pre_move_url):
                 self._transition(
                     BotState.BLOCKED_URL,
-                    f"Guard active: URL {pre_move_url!r} is not an allowed computer play path",
+                    f"Guard active: URL {pre_move_url!r} is not an allowed play path",
                 )
                 continue
 
             # 10. MOVING state: execute move
+            if self.settings.no_play:
+                logger.info(
+                    "[NO-PLAY] Spectator mode active: move %s (%s) chosen but not executed on board",
+                    move_san,
+                    decision.move.uci(),
+                )
+                await asyncio.sleep(1.0)
+                continue
+
             self._transition(BotState.MOVING, f"Playing move {move_san}")
             chosen_style = self._override_style or self._move_style
             self._override_style = None
@@ -588,6 +848,7 @@ class BotController:
                 ),
                 rng=self.rng,
                 promotion_options=snapshot.promotion_options,
+                window=snapshot.window,
             )
 
             try:
@@ -613,12 +874,28 @@ class BotController:
                 if ver_snap is None or not ver_snap.found:
                     continue
 
-                # If promotion dialog is open, handle clicking the wanted piece
+                # If promotion dialog is open, handle clicking the wanted piece with human reaction delay
                 if ver_snap.promotion_open and decision.move.promotion:
                     wanted = chess.piece_symbol(decision.move.promotion).lower()
-                    await self.input_handler.click_promotion(wanted, ver_snap.promotion_options)
-                    await asyncio.sleep(0.2)
+                    if ver_snap.promotion_options:
+                        human_delay = self.rng.uniform(0.18, 0.40) * (1.0 / max(0.2, self.settings.speed))
+                        human_delay = max(0.05, min(0.60, human_delay))
+                        logger.info(
+                            "Promotion picker detected for piece '%s'; clicking with human delay of %.2fs",
+                            wanted,
+                            human_delay,
+                        )
+                        await asyncio.sleep(human_delay)
+                        await self.input_handler.click_promotion(
+                            wanted, ver_snap.promotion_options
+                        )
+
+                        await asyncio.sleep(0.2)
+                    else:
+                        logger.debug("Promotion dialog is open but options not yet rendered; waiting...")
+                        await asyncio.sleep(0.1)
                     continue
+
 
                 try:
                     ver_state = GameState.from_snapshot(ver_snap, play_as=self.settings.play_as)
@@ -686,7 +963,7 @@ class BotController:
                         if final_state.is_our_turn and final_state.fen == game_state.fen:
                             # Re-check URL guard before immediate retry
                             retry_url = await self.page.url()
-                            if not is_allowed_url(retry_url):
+                            if not self.is_allowed_url(retry_url):
                                 self._transition(
                                     BotState.BLOCKED_URL,
                                     f"Guard active: URL {retry_url!r} not allowed",
@@ -794,3 +1071,209 @@ class BotController:
 
             # Loop continues to next turn
             await asyncio.sleep(0.25 + self.rng.uniform(-0.05, 0.05))
+
+    async def _click_start_game(self, snapshot: Snapshot) -> bool:
+        """Attempt to click Start Game or Play button in the online lobby."""
+        # 1. Try physical click via input_handler if button rect is known
+        if snapshot.start_game_button is not None:
+            btn_rect = snapshot.start_game_button.rect
+            if hasattr(self.input_handler, "click_rect"):
+                try:
+                    success = await self.input_handler.click_rect(btn_rect, rng=self.rng)
+                    if success:
+                        return True
+                except Exception as exc:
+                    logger.debug("InputHandler click_rect for Start Game failed: %s", exc)
+
+        # 2. Fallback to DOM click evaluation
+        start_script = """
+        (() => {
+          const selectors = [
+            'a[href*="createLiveChallenge"]',
+            'button[data-cy="new-game-index-play"]',
+            'button.new-game-index-play',
+            'button[data-cy="play-button"]',
+            'button.play-controller-button',
+            '.play-online-quick-links-quick-start a',
+            '.play-online-quick-links-quick-start button',
+            'button.cc-button-primary[type="submit"]',
+            'button.ui_v5-button-primary'
+          ];
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+              const style = window.getComputedStyle(el);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+                el.click();
+                return true;
+              }
+            }
+          }
+          const allClickables = Array.from(document.querySelectorAll('button, a.cc-button-primary, a.ui_v5-button-component'));
+          for (const btn of allClickables) {
+            const text = (btn.textContent || '').trim().toLowerCase();
+            if (text === 'start game' || text === 'play' || text.startsWith('play (')) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+        """
+        try:
+            res = await self.page.evaluate_json(start_script)
+            return bool(res)
+        except Exception as exc:
+            logger.debug("DOM evaluation for Start Game click failed: %s", exc)
+            return False
+
+    async def _click_new_game_or_rematch(self, snapshot: Snapshot) -> bool:
+        """Attempt to click New Game or Rematch button in page."""
+        # 1. Try clicking via InputHandler if button rect was extracted from snapshot
+        if snapshot.game_over_buttons:
+            # Prefer rematch or new_game
+            btn = snapshot.game_over_buttons[0]
+            for candidate in snapshot.game_over_buttons:
+                if candidate.type in ("new_game", "rematch"):
+                    btn = candidate
+                    break
+
+            try:
+                if hasattr(self.input_handler, "click_rect"):
+                    success = await self.input_handler.click_rect(btn.rect, rng=self.rng)
+                    if success:
+                        return True
+            except Exception as exc:
+                logger.debug("InputHandler click_rect failed: %s", exc)
+
+        # 2. Fallback to direct DOM click evaluation
+        click_script = """
+        (() => {
+          const selectors = [
+            'button[data-cy="new-game-button"]',
+            'button[data-cy="game-over-new-game-button"]',
+            'button[data-cy="game-over-rematch-button"]',
+            'button[data-cy="game-over-play-again-button"]',
+            'button.game-over-button-component',
+            'button.game-over-rematch-button',
+            '.game-over-modal-buttons-component button',
+            '.game-over-modal button',
+            '.game-over-dialog button',
+            '.modal-game-over-component button'
+          ];
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+              const style = window.getComputedStyle(el);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                el.click();
+                return true;
+              }
+            }
+          }
+          const allBtns = Array.from(document.querySelectorAll('button, a.ui_v5-button-component'));
+          for (const btn of allBtns) {
+            const text = (btn.textContent || '').trim().toLowerCase();
+            if (text.includes('rematch') || text.includes('new game') || text.includes('play again') || text.includes('next')) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+        """
+        try:
+            res = await self.page.evaluate_json(click_script)
+            return bool(res)
+        except Exception as eval_exc:
+            logger.debug("DOM evaluation for new game / rematch button click failed: %s", eval_exc)
+            return False
+
+    async def _resign_game(self) -> bool:
+        """Attempt to click Resign and confirm resignation in page."""
+        resign_script = """
+        (() => {
+          const resignSelectors = [
+            'button[data-cy="resign-button"]',
+            'button[aria-label="Resign"]',
+            'button.resign-button-component',
+            'button.game-controls-resign',
+            '[data-control="resign"]',
+            '.game-controls-component button[aria-label*="Resign"]',
+            '.live-game-buttons-component button[aria-label*="Resign"]'
+          ];
+          for (const sel of resignSelectors) {
+            const btn = document.querySelector(sel);
+            if (btn) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          const allBtns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+          for (const btn of allBtns) {
+            const label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.textContent || '').trim().toLowerCase();
+            if (label === 'resign' || label.includes('resign')) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+        """
+        confirm_script = """
+        (() => {
+          const confirmSelectors = [
+            'button[data-cy="resign-confirm-button"]',
+            'button[data-cy="confirm-resign"]',
+            'button.ui_v5-button-primary',
+            'button.game-controls-check',
+            'button[aria-label="Yes"]',
+            'button[aria-label="Confirm"]',
+            '.modal-confirm-content button.ui_v5-button-danger'
+          ];
+          for (const sel of confirmSelectors) {
+            const btn = document.querySelector(sel);
+            if (btn) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          const allBtns = Array.from(document.querySelectorAll('button, div[role="button"]'));
+          for (const btn of allBtns) {
+            const label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.textContent || '').trim().toLowerCase();
+            if (label === 'yes' || label === 'confirm' || label.includes('confirm')) {
+              const style = window.getComputedStyle(btn);
+              if (style && style.display !== 'none' && style.visibility !== 'hidden') {
+                btn.click();
+                return true;
+              }
+            }
+          }
+          return false;
+        })()
+        """
+        try:
+            clicked = await self.page.evaluate_json(resign_script)
+            if clicked:
+                await asyncio.sleep(self.rng.uniform(0.3, 0.6))
+                await self.page.evaluate_json(confirm_script)
+                return True
+        except Exception as exc:
+            logger.debug("DOM evaluation for resign button click failed: %s", exc)
+        return False
+

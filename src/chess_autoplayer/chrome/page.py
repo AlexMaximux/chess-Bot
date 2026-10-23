@@ -18,11 +18,12 @@ class EvaluationError(PageError):
     """Raised when JavaScript evaluation in the isolated world throws an exception."""
 
 
-def is_allowed_url(url: str) -> bool:
+def is_allowed_url(url: str, mode: str = "bot") -> bool:
     """Fair-play URL guard.
 
-    Returns True only if url uses https, hostname is www.chess.com (default port),
-    and path starts with /play/computer.
+    In 'bot' mode, allows https://www.chess.com with path starting with /play/computer.
+    In 'human' mode, only checks chess.com domain (not path), allowing
+    /play/computer, /play/online, /live, /game/live, etc.
     """
     if not url:
         return False
@@ -35,7 +36,18 @@ def is_allowed_url(url: str) -> bool:
     if parts.scheme != "https":
         return False
 
-    if parts.hostname != "www.chess.com":
+    hostname = (parts.hostname or "").lower()
+
+    if mode == "human":
+        # In human mode only check chess.com domain, not path
+        if hostname != "chess.com" and not hostname.endswith(".chess.com"):
+            return False
+        if parts.port is not None and parts.port != 443:
+            return False
+        return True
+
+    # Bot mode: only allowed computer play path on www.chess.com
+    if hostname != "www.chess.com":
         return False
     if parts.port is not None and parts.port != 443:
         return False
@@ -49,6 +61,7 @@ def is_allowed_url(url: str) -> bool:
 async def find_or_create_chess_tab(
     cdp: CDPClient,
     start_url: str = "https://www.chess.com/play/computer",
+    mode: str = "bot",
 ) -> str:
     """Find a chess.com tab or create one if none exists.
 
@@ -59,34 +72,58 @@ async def find_or_create_chess_tab(
 
     page_targets = [t for t in target_infos if t.get("type") == "page"]
 
-    if not is_allowed_url(start_url):
+    if not is_allowed_url(start_url, mode=mode):
         logger.warning(
             "start_url %r is not an allowed URL; using default https://www.chess.com/play/computer",
             start_url,
         )
         start_url = "https://www.chess.com/play/computer"
 
-    # 1. Look for tab already on an allowed /play/computer URL
-    matching_computer: list[dict[str, Any]] = []
+    # 1. Look for tab already on an allowed URL
+    matching_tab: list[dict[str, Any]] = []
 
     for t in page_targets:
         url = t.get("url", "")
-        if is_allowed_url(url):
-            matching_computer.append(t)
+        if is_allowed_url(url, mode=mode):
+            matching_tab.append(t)
 
-    if matching_computer:
-        chosen = matching_computer[0]
+    if matching_tab:
+        def _tab_priority(t: dict[str, Any]) -> int:
+            u = t.get("url", "")
+            if not u:
+                return 0
+            if u == start_url or (start_url and u.startswith(start_url)):
+                return 100
+            if "/game/live" in u or "/play/online/live" in u:
+                return 80
+            try:
+                start_path = urlsplit(start_url).path.rstrip("/")
+                tab_path = urlsplit(u).path.rstrip("/")
+                if start_path and tab_path.startswith(start_path):
+                    return 70
+            except Exception:
+                pass
+            if "/play/online" in u and mode == "human":
+                return 60
+            if "/play/computer" in u and "computer" in start_url:
+                return 50
+            if "/play" in u:
+                return 40
+            return 10
+
+        matching_tab.sort(key=_tab_priority, reverse=True)
+        chosen = matching_tab[0]
         target_id = chosen.get("targetId", "")
         logger.info(
-            "Found existing chess.com/play/computer tab: %s (%s)",
+            "Found existing chess.com tab: %s (%s)",
             target_id,
             chosen.get("url"),
         )
         return str(target_id)
 
-    # 2. Never hijack non-allowed tabs (e.g. /play/online); create a new target
+    # 2. Never hijack non-allowed tabs; create a new target
     logger.info(
-        "No tab found on an allowed /play/computer URL; creating new target with url %s",
+        "No tab found on an allowed URL; creating new target with url %s",
         start_url,
     )
     create_res = await cdp.send("Target.createTarget", {"url": start_url})
@@ -219,6 +256,10 @@ class ChessPage:
 
         raise PageError("Failed to evaluate script in isolated world after retry")
 
+    async def evaluate(self, expression: str, timeout: float = 10.0) -> object:
+        """Evaluate a JavaScript expression in the isolated world and return the value."""
+        return await self.evaluate_json(expression, timeout=timeout)
+
     async def url(self) -> str:
         """Get the current URL of the page."""
         val = await self.evaluate_json("window.location.href")
@@ -228,6 +269,27 @@ class ChessPage:
         """Navigate the tab to a given URL."""
         await self._cdp.send("Page.navigate", {"url": url}, session_id=self._session_id)
         self._context_id = None
+
+    async def ensure_start_url(self, start_url: str, delay: float = 0.5) -> bool:
+        """If tab is not on start_url and not in an active live game, navigate to start_url.
+
+        Returns True if navigation was initiated, False if already on an appropriate URL.
+        """
+        if not start_url:
+            return False
+        curr_url = await self.url()
+        if (
+            curr_url.startswith(start_url)
+            or "/game/live" in curr_url
+            or "/play/online/live" in curr_url
+        ):
+            return False
+
+        logger.info("Navigating tab from %s to %s", curr_url, start_url)
+        await self.navigate(start_url)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        return True
 
     async def send_command(
         self, method: str, params: dict[str, Any] | None = None, timeout: float = 10.0

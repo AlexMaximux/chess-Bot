@@ -12,10 +12,11 @@ def test_default_settings() -> None:
     settings = Settings()
     assert settings.debug_port == 9333
     assert settings.strength == "club"
-    assert settings.input_mode == "cdp"
+    assert settings.input_mode == "os"
+    assert settings.mode == "human"
     assert settings.move_style == "mixed"
     assert settings.play_as == "auto"
-    assert settings.start_url == "https://www.chess.com/play/computer"
+    assert settings.start_url == "https://www.chess.com/play/online"
     assert settings.resolved_chrome_path().is_absolute()
     assert settings.resolved_profile_dir().is_absolute()
     assert settings.resolved_stockfish_path().is_absolute()
@@ -23,7 +24,14 @@ def test_default_settings() -> None:
 
 def test_save_and_load_round_trip(tmp_path: Path) -> None:
     cfg_file = tmp_path / "config.json"
-    original = Settings(debug_port=9444, strength="master", input_mode="os", move_style="drag")
+    original = Settings(
+        debug_port=9444,
+        strength="master",
+        input_mode="os",
+        mode="human",
+        move_style="drag",
+        start_url="https://www.chess.com/play/online",
+    )
     save_config(original, config_path=cfg_file)
 
     loaded = load_config(config_path=cfg_file)
@@ -60,6 +68,11 @@ def test_invalid_values_raise_config_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="input_mode"):
         load_config(config_path=cfg_file)
 
+    # Invalid mode
+    cfg_file.write_text(json.dumps({"mode": "alien"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="mode"):
+        load_config(config_path=cfg_file)
+
     # Invalid move style
     cfg_file.write_text(json.dumps({"move_style": "teleport"}), encoding="utf-8")
     with pytest.raises(ConfigError, match="move_style"):
@@ -94,3 +107,20 @@ def test_default_config_path_when_file_does_not_exist(tmp_path: Path) -> None:
     cfg_file = tmp_path / "nonexistent" / "config.json"
     loaded = load_config(config_path=cfg_file)
     assert loaded == Settings()
+
+
+def test_human_mode_defaults_input_mode_to_os(tmp_path: Path) -> None:
+    # 1. Direct dataclass instantiation
+    bot_settings = Settings(mode="bot")
+    assert bot_settings.input_mode == "cdp"
+
+    human_settings = Settings(mode="human")
+    assert human_settings.input_mode == "os"
+
+    # 2. Config file loading
+    cfg_file = tmp_path / "config_human.json"
+    cfg_file.write_text(json.dumps({"mode": "human"}), encoding="utf-8")
+    loaded = load_config(config_path=cfg_file)
+    assert loaded.mode == "human"
+    assert loaded.input_mode == "os"
+

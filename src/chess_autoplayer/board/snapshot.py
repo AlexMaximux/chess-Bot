@@ -45,6 +45,43 @@ class PromotionOption:
 
 
 @dataclass(frozen=True)
+class ClockInfo:
+    text: str | None = None
+    seconds: float | None = None
+    ticking: bool = False
+    color: str | None = None
+
+
+@dataclass(frozen=True)
+class Clocks:
+    top: ClockInfo | None = None
+    bottom: ClockInfo | None = None
+    white: ClockInfo | None = None
+    black: ClockInfo | None = None
+
+
+@dataclass(frozen=True)
+class StructuredMove:
+    ply: int
+    move_number: int
+    color: str  # 'w' or 'b'
+    san: str
+    time: str | None = None
+
+
+@dataclass(frozen=True)
+class GameOverButton:
+    type: str  # "rematch" or "new_game"
+    text: str
+    rect: Rect
+
+
+@dataclass(frozen=True)
+class StartGameButton:
+    rect: Rect
+
+
+@dataclass(frozen=True)
 class Snapshot:
     url: str
     found: bool
@@ -62,6 +99,23 @@ class Snapshot:
     dragging: bool
     our_color_hint: str | None = None
     promotion_options: list[PromotionOption] = field(default_factory=list)
+    structured_moves: list[StructuredMove] = field(default_factory=list)
+    clocks: Clocks = field(default_factory=Clocks)
+    game_over_buttons: list[GameOverButton] = field(default_factory=list)
+    has_resign_button: bool = False
+    has_draw_button: bool = False
+    has_move_list: bool = False
+    has_start_button: bool = False
+    start_game_button: StartGameButton | None = None
+
+    @property
+    def our_clock(self) -> ClockInfo | None:
+        """Return the clock corresponding to our color if available, or bottom clock."""
+        if self.our_color_hint == "w":
+            return self.clocks.white
+        if self.our_color_hint == "b":
+            return self.clocks.black
+        return self.clocks.bottom
 
 
 def _parse_rect(raw: Any) -> Rect:
@@ -208,6 +262,10 @@ def parse_snapshot(raw: object) -> Snapshot:
                 r_opt = _parse_rect(opt["rect"])
                 promotion_options.append(PromotionOption(piece=piece_str, rect=r_opt))
 
+    clocks = _parse_clocks(raw.get("clocks"))
+    raw_struct_moves = raw.get("structuredMoves", raw.get("structured_moves", []))
+    structured_moves = _parse_structured_moves(raw_struct_moves)
+
     return Snapshot(
         url=url,
         found=found,
@@ -225,4 +283,106 @@ def parse_snapshot(raw: object) -> Snapshot:
         dragging=dragging,
         our_color_hint=hint,
         promotion_options=promotion_options,
+        structured_moves=structured_moves,
+        clocks=clocks,
+        game_over_buttons=_parse_game_over_buttons(
+            raw.get("gameOverButtons", raw.get("game_over_buttons", []))
+        ),
+        has_resign_button=bool(raw.get("hasResignButton", False)),
+        has_draw_button=bool(raw.get("hasDrawButton", False)),
+        has_move_list=bool(raw.get("hasMoveList", False)),
+        has_start_button=bool(raw.get("hasStartButton", False)),
+        start_game_button=_parse_start_game_button(
+            raw.get("startGameButton", raw.get("start_game_button"))
+        ),
     )
+
+
+def _parse_start_game_button(raw: Any) -> StartGameButton | None:
+    if not isinstance(raw, dict) or "rect" not in raw:
+        return None
+    try:
+        rect = _parse_rect(raw["rect"])
+        return StartGameButton(rect=rect)
+    except Exception:
+        return None
+
+
+def _parse_game_over_buttons(raw: Any) -> list[GameOverButton]:
+    if not isinstance(raw, list):
+        return []
+    res: list[GameOverButton] = []
+    for item in raw:
+        if isinstance(item, dict):
+            try:
+                b_type = str(item.get("type", "new_game"))
+                text = str(item.get("text", ""))
+                r_dict = item.get("rect", {})
+                if isinstance(r_dict, dict):
+                    rect = Rect(
+                        x=float(r_dict.get("x", 0.0)),
+                        y=float(r_dict.get("y", 0.0)),
+                        width=float(r_dict.get("width", 0.0)),
+                        height=float(r_dict.get("height", 0.0)),
+                    )
+                    res.append(GameOverButton(type=b_type, text=text, rect=rect))
+            except Exception:
+                continue
+    return res
+
+
+def _parse_clock_info(raw: Any) -> ClockInfo | None:
+    if not isinstance(raw, dict):
+        return None
+    text = raw.get("text")
+    if text is not None and not isinstance(text, str):
+        text = str(text)
+    seconds_raw = raw.get("seconds")
+    seconds = float(seconds_raw) if isinstance(seconds_raw, (int, float)) else None
+    ticking = bool(raw.get("ticking", False))
+    color = raw.get("color")
+    if color is not None and not isinstance(color, str):
+        color = str(color)
+    return ClockInfo(text=text, seconds=seconds, ticking=ticking, color=color)
+
+
+def _parse_clocks(raw: Any) -> Clocks:
+    if not isinstance(raw, dict):
+        return Clocks()
+    return Clocks(
+        top=_parse_clock_info(raw.get("top")),
+        bottom=_parse_clock_info(raw.get("bottom")),
+        white=_parse_clock_info(raw.get("white")),
+        black=_parse_clock_info(raw.get("black")),
+    )
+
+
+def _parse_structured_moves(raw: Any) -> list[StructuredMove]:
+    if not isinstance(raw, list):
+        return []
+    res: list[StructuredMove] = []
+    for item in raw:
+        if isinstance(item, dict):
+            try:
+                ply = int(item.get("ply", 0))
+                move_num_val = item.get("moveNumber")
+                if move_num_val is None:
+                    move_num_val = item.get("move_number", 0)
+                move_num = int(move_num_val) if move_num_val is not None else 0
+                color = str(item.get("color", "w"))
+                san = str(item.get("san", ""))
+                time_val = item.get("time")
+                if time_val is not None and not isinstance(time_val, str):
+                    time_val = str(time_val)
+                res.append(
+                    StructuredMove(
+                        ply=ply,
+                        move_number=move_num,
+                        color=color,
+                        san=san,
+                        time=time_val,
+                    )
+                )
+            except Exception:
+                continue
+    return res

@@ -23,6 +23,8 @@ def compute_fitts_duration_ms(
     Formula: a + b * log2(distance / width + 1) with a ≈ 120ms, b ≈ 150ms.
     Clamped to [180.0, 900.0] ms.
     """
+    # NOTE: Fitts's law duration - زمان جابجایی دست انسان تابعی لگاریتمی از فاصله تا هدف و اندازه خانه است؛
+    # حرکت به خانه‌های دورتر زمان بیشتری نسبت به خانه‌های مجاور می‌برد و سرعت خطی ثابت نشانگر قطعی بات است.
     r = rng if rng is not None else random.Random()
     w = max(1.0, target_width)
     base = 120.0 + 150.0 * math.log2(distance / w + 1.0)
@@ -52,6 +54,7 @@ def _cubic_bezier(
 
 def _ease_in_out(t: float) -> float:
     """Smoothstep ease-in-out parameter mapping."""
+    # NOTE: Smoothstep acceleration - مفاصل دست انسان با شتاب ملایم حرکت را آغاز کرده و پیش از توقف کند می‌شوند.
     return t * t * (3.0 - 2.0 * t)
 
 
@@ -108,7 +111,8 @@ def generate_drag_path(
     nx = -uy
     ny = ux
 
-    # Determine whether overshoot occurs
+    # NOTE: Overshoot 25% on long moves - انسان هنگام کشیدن سریع مهره به خانه‌های دور،
+    # با احتمال حدود ۲۵٪ از هدف رد شده (overshoot) و سپس بلافاصله مسیر را به سمت مرکز خانه اصلاح می‌کند.
     should_overshoot = force_overshoot or (dist > 2.0 * square_size and r.random() < 0.25)
 
     if not should_overshoot:

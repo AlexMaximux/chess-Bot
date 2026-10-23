@@ -57,11 +57,14 @@ async def async_probe(save_fixture: str | None = None, output_json: bool = False
         return 1
 
     try:
-        target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+        target_id = await find_or_create_chess_tab(
+            cdp, settings.start_url, mode=settings.mode
+        )
         page = await ChessPage.attach(cdp, target_id)
+        await page.ensure_start_url(settings.start_url)
 
         current_url = await page.url()
-        url_allowed = is_allowed_url(current_url)
+        url_allowed = is_allowed_url(current_url, mode=settings.mode)
 
         # Wait up to 10s for the board to render if tab newly loaded
         start_wait = time.monotonic()
@@ -179,7 +182,9 @@ async def async_analyse(
             return 1
 
         try:
-            target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+            target_id = await find_or_create_chess_tab(
+                cdp, settings.start_url, mode=settings.mode
+            )
             page = await ChessPage.attach(cdp, target_id)
 
             start_wait = time.monotonic()
@@ -269,6 +274,7 @@ async def async_run(
     input_mode: str | None = None,
     move_style: str | None = None,
     seed: int | None = None,
+    no_play: bool = False,
 ) -> int:
     """Run autonomous chess bot loop."""
     base_settings = load_config()
@@ -284,6 +290,8 @@ async def async_run(
         kwargs["input_mode"] = input_mode
     if move_style is not None:
         kwargs["move_style"] = move_style
+    if no_play:
+        kwargs["no_play"] = True
 
     settings = replace(base_settings, **kwargs)
 
@@ -308,8 +316,11 @@ async def async_run(
         return 1
 
     try:
-        target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+        target_id = await find_or_create_chess_tab(
+            cdp, settings.start_url, mode=settings.mode
+        )
         page = await ChessPage.attach(cdp, target_id)
+        await page.ensure_start_url(settings.start_url)
     except Exception as exc:
         print(f"Error finding or attaching to chess tab: {exc}", file=sys.stderr)
         engine.close()
@@ -340,8 +351,11 @@ async def async_run(
         if not ws:
             raise ConnectionLost("Chrome was closed or debug port is not answering")
         new_cdp = await CDPClient.connect(ws)
-        new_target_id = await find_or_create_chess_tab(new_cdp, settings.start_url)
+        new_target_id = await find_or_create_chess_tab(
+            new_cdp, settings.start_url, mode=settings.mode
+        )
         new_page = await ChessPage.attach(new_cdp, new_target_id)
+        await new_page.ensure_start_url(settings.start_url)
         if settings.input_mode == "os":
             from chess_autoplayer.input.os_input import OSInput
 
@@ -508,6 +522,11 @@ def main() -> None:
         help="Random seed for move choice and human mouse trajectories",
     )
     run_parser.add_argument(
+        "--no-play",
+        action="store_true",
+        help="Monitor and log moves without performing them on the board (spectator mode)",
+    )
+    run_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose debug logging"
     )
 
@@ -546,6 +565,7 @@ def main() -> None:
                 input_mode=args.input_mode,
                 move_style=args.move_style,
                 seed=args.seed,
+                no_play=getattr(args, "no_play", False),
             )
         )
         sys.exit(exit_code)

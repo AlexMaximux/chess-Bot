@@ -175,3 +175,26 @@ def test_black_to_move_eval() -> None:
     dec = select_move(board, [c1, c2], prof)
     assert dec.move in (c1.move, c2.move)
     assert isinstance(dec, Decision)
+
+
+def test_close_position_alt_selection_rate() -> None:
+    board = chess.Board()
+    m1 = chess.Move.from_uci("e2e4")
+    m2 = chess.Move.from_uci("d2d4")
+    # Diff is 15 cp (< 50 cp)
+    c1 = Line(move=m1, score_cp=30, mate_score=None, pv=[m1])
+    c2 = Line(move=m2, score_cp=15, mate_score=None, pv=[m2])
+
+    prof = get_profile("club")
+    rng = random.Random(42)
+
+    alt_reason_count = 0
+    total = 1000
+    for _ in range(total):
+        dec = select_move(board, [c1, c2], prof, rng=rng)
+        if "close_position_alt" in dec.reason:
+            alt_reason_count += 1
+
+    # Explicit chance is uniform(0.05, 0.15) -> mean around 10%
+    rate = alt_reason_count / total
+    assert 0.05 <= rate <= 0.15

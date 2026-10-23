@@ -15,7 +15,7 @@ class FakeServer:
     def __init__(self) -> None:
         self.last_received: list[dict[str, Any]] = []
         self.connections: list[ServerConnection] = []
-        self._server = None
+        self._server: Any = None
         self.url = ""
 
     async def start(self) -> None:

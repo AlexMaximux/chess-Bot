@@ -73,6 +73,7 @@ class OSInput:
         self.last_screen_pos: tuple[float, float] | None = None
         self._mouse_pressed = False
         self._listener_installed = False
+        self._calibrated_win_pos: tuple[float, float] | None = None
 
     def verify_permissions(self) -> None:
         """Verify macOS Accessibility permission or raise AccessibilityPermissionError."""
@@ -81,6 +82,46 @@ class OSInput:
                 "macOS Accessibility permission is required for OS mouse input.\n"
                 "Please grant permission in: System Settings → Privacy & Security → Accessibility "
                 "→ the terminal app you run it from."
+            )
+
+    async def _get_window_info(self) -> WindowInfo:
+        """Query Chrome window position and dimensions via page execution."""
+        try:
+            raw = await self.page.evaluate_json(
+                "JSON.stringify({"
+                "  screenX: window.screenX,"
+                "  screenY: window.screenY,"
+                "  outerWidth: window.outerWidth,"
+                "  outerHeight: window.outerHeight,"
+                "  innerWidth: window.innerWidth,"
+                "  innerHeight: window.innerHeight"
+                "})"
+            )
+            if isinstance(raw, str):
+                import json
+
+                parsed = json.loads(raw)
+            elif isinstance(raw, dict):
+                parsed = raw
+            else:
+                parsed = {}
+            return WindowInfo(
+                screenX=float(parsed.get("screenX", 0.0)),
+                screenY=float(parsed.get("screenY", 0.0)),
+                outerWidth=float(parsed.get("outerWidth", 1200.0)),
+                outerHeight=float(parsed.get("outerHeight", 900.0)),
+                innerWidth=float(parsed.get("innerWidth", 1200.0)),
+                innerHeight=float(parsed.get("innerHeight", 800.0)),
+            )
+        except Exception as exc:
+            logger.debug("Failed to query live window info: %s", exc)
+            return WindowInfo(
+                screenX=0.0,
+                screenY=0.0,
+                outerWidth=1200.0,
+                outerHeight=900.0,
+                innerWidth=1200.0,
+                innerHeight=800.0,
             )
 
     async def bring_chrome_to_front(self) -> None:
@@ -106,6 +147,18 @@ class OSInput:
 
     async def ensure_calibrated(self, win: WindowInfo, board_rect: Rect) -> None:
         """Calibrate client-to-screen coordinate mapping if not yet calibrated."""
+        # If window moved significantly (> 20px) from calibrated position, recalibrate
+        if self.calibration is not None and self._calibrated_win_pos is not None:
+            dx = abs(win.screenX - self._calibrated_win_pos[0])
+            dy = abs(win.screenY - self._calibrated_win_pos[1])
+            if dx > 20.0 or dy > 20.0:
+                logger.info(
+                    "Chrome window moved by (%.1f, %.1f)px; recalibrating OS mouse coordinates",
+                    dx,
+                    dy,
+                )
+                self.calibration = None
+
         if self.calibration is not None:
             return
 
@@ -113,43 +166,68 @@ class OSInput:
         await self.bring_chrome_to_front()
         await asyncio.sleep(0.1)
 
-        if not self._listener_installed:
-            install_script = (
-                "window.__cap_last_mouse = null;\n"
-                "window.addEventListener('mousemove', (e) => {\n"
-                "  window.__cap_last_mouse = { clientX: e.clientX, clientY: e.clientY };\n"
-                "}, { capture: true });\n"
-                "true;"
-            )
-            await self.page.evaluate_json(install_script)
-            self._listener_installed = True
-
         top_chrome = max(60.0, win.outerHeight - win.innerHeight)
 
-        # Sample point 1 inside board
-        s1_x = win.screenX + board_rect.x + 50.0
-        s1_y = win.screenY + top_chrome + board_rect.y + 50.0
+        # Fallback geometric model in case dynamic event sampling fails
+        geometric_fallback = CalibrationModel(
+            scale_x=1.0,
+            offset_x=win.screenX,
+            scale_y=1.0,
+            offset_y=win.screenY + top_chrome,
+        )
 
-        # Sample point 2 inside board
-        s2_x = win.screenX + board_rect.x + 200.0
-        s2_y = win.screenY + top_chrome + board_rect.y + 200.0
+        try:
+            if not self._listener_installed:
+                install_script = (
+                    "window.__cap_last_mouse = null;\n"
+                    "window.addEventListener('mousemove', (e) => {\n"
+                    "  window.__cap_last_mouse = { clientX: e.clientX, clientY: e.clientY };\n"
+                    "}, { capture: true });\n"
+                    "true;"
+                )
+                await self.page.evaluate_json(install_script)
+                self._listener_installed = True
 
-        post_cg_mouse_event(Quartz.kCGEventMouseMoved, s1_x, s1_y)
-        await asyncio.sleep(0.08)
-        c1_raw = await self.page.evaluate_json("window.__cap_last_mouse;")
-        if not isinstance(c1_raw, dict):
-            raise CalibrationError("Could not read client coordinates for calibration point 1")
-        c1 = (float(c1_raw["clientX"]), float(c1_raw["clientY"]))
+            # Sample point 1 inside board
+            s1_x = win.screenX + board_rect.x + 50.0
+            s1_y = win.screenY + top_chrome + board_rect.y + 50.0
 
-        post_cg_mouse_event(Quartz.kCGEventMouseMoved, s2_x, s2_y)
-        await asyncio.sleep(0.08)
-        c2_raw = await self.page.evaluate_json("window.__cap_last_mouse;")
-        if not isinstance(c2_raw, dict):
-            raise CalibrationError("Could not read client coordinates for calibration point 2")
-        c2 = (float(c2_raw["clientX"]), float(c2_raw["clientY"]))
+            # Sample point 2 inside board
+            s2_x = win.screenX + board_rect.x + 200.0
+            s2_y = win.screenY + top_chrome + board_rect.y + 200.0
 
-        self.calibration = solve_calibration((s1_x, s1_y), c1, (s2_x, s2_y), c2)
-        logger.info("Calibrated OS screen mapping: %s", self.calibration)
+            async def _sample_point(target_x: float, target_y: float) -> tuple[float, float] | None:
+                await self.page.evaluate_json("window.__cap_last_mouse = null; true;")
+                post_cg_mouse_event(Quartz.kCGEventMouseMoved, target_x, target_y)
+                for _ in range(8):
+                    await asyncio.sleep(0.05)
+                    raw = await self.page.evaluate_json("window.__cap_last_mouse;")
+                    if isinstance(raw, dict) and "clientX" in raw and "clientY" in raw:
+                        return float(raw["clientX"]), float(raw["clientY"])
+                return None
+
+            c1 = await _sample_point(s1_x, s1_y)
+            c2 = await _sample_point(s2_x, s2_y)
+
+            if c1 is None or c2 is None:
+                logger.warning(
+                    "OS dynamic mouse calibration probe timed out (c1=%s, c2=%s); using geometric fallback",
+                    c1,
+                    c2,
+                )
+                self.calibration = geometric_fallback
+            else:
+                self.calibration = solve_calibration((s1_x, s1_y), c1, (s2_x, s2_y), c2)
+                logger.info("Calibrated OS screen mapping: %s", self.calibration)
+
+            self._calibrated_win_pos = (win.screenX, win.screenY)
+        except Exception as cal_err:
+            logger.warning(
+                "Dynamic calibration encountered an error: %s; falling back to geometric model",
+                cal_err,
+            )
+            self.calibration = geometric_fallback
+            self._calibrated_win_pos = (win.screenX, win.screenY)
 
     def _check_safety(self) -> None:
         """Check if user moved physical cursor > 40px away from expected position."""
@@ -170,14 +248,11 @@ class OSInput:
         self.verify_permissions()
         await self.bring_chrome_to_front()
 
-        # Fallback window info for calibration if not provided
-        win_info = WindowInfo(
-            screenX=0.0,
-            screenY=0.0,
-            outerWidth=1200.0,
-            outerHeight=900.0,
-            innerWidth=1200.0,
-            innerHeight=800.0,
+        # Resolve window info from context or live query
+        win_info = (
+            ctx.window
+            if (ctx.window is not None and ctx.window.outerWidth > 0)
+            else await self._get_window_info()
         )
         await self.ensure_calibrated(win_info, ctx.board_rect)
         assert self.calibration is not None
@@ -332,6 +407,49 @@ class OSInput:
             cur_screen,
             (cx_screen, cy_screen),
             square_size=target_opt.rect.width,
+            rng=r,
+        )
+        for pt in path:
+            self._check_safety()
+            if pt.dt_ms > 0:
+                await asyncio.sleep(pt.dt_ms / 1000.0)
+            post_cg_mouse_event(Quartz.kCGEventMouseMoved, pt.x, pt.y)
+            self.last_screen_pos = (pt.x, pt.y)
+
+        await asyncio.sleep(r.uniform(0.040, 0.100))
+        self._check_safety()
+        post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, cx_screen, cy_screen)
+        await asyncio.sleep(r.uniform(0.030, 0.070))
+        post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, cx_screen, cy_screen)
+        self.last_screen_pos = (cx_screen, cy_screen)
+        return True
+
+    async def click_rect(
+        self,
+        rect: Rect,
+        rng: random.Random | None = None,
+    ) -> bool:
+        if rect.width <= 0 or rect.height <= 0:
+            return False
+
+        if self.calibration is None:
+            win_info = await self._get_window_info()
+            dummy_board = Rect(x=0.0, y=0.0, width=rect.width, height=rect.height)
+            await self.ensure_calibrated(win_info, dummy_board)
+
+        if self.calibration is None:
+            return False
+
+        r = rng if rng is not None else random.Random()
+        cx_client = rect.x + rect.width / 2.0
+        cy_client = rect.y + rect.height / 2.0
+        cx_screen, cy_screen = self.calibration.client_to_screen(cx_client, cy_client)
+
+        cur_screen = get_real_cursor_pos()
+        path = generate_hover_path(
+            cur_screen,
+            (cx_screen, cy_screen),
+            square_size=min(rect.width, rect.height),
             rng=r,
         )
         for pt in path:

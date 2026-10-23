@@ -54,7 +54,9 @@ async def play_uci_move(uci_str: str) -> None:
     cdp = await CDPClient.connect(ws_url)
 
     try:
-        target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+        target_id = await find_or_create_chess_tab(
+            cdp, settings.start_url, mode=settings.mode
+        )
         page = await ChessPage.attach(cdp, target_id)
 
         # Snapshot board geometry

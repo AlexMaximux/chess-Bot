@@ -37,7 +37,8 @@ def square_to_point(
     sq_size = board_rect.width / 8.0
     r = rng if rng is not None else random.Random()
 
-    # Half-width of the inner bounding box
+    # NOTE: Non-center square landing jitter - انسان هیچ‌گاه دقیقاً مرکز هندسی و ریاضی خانه شطرنج
+    # را لمس یا کلیک نمی‌کند؛ اعمال آفست تصادفی در محدوده ۶۰٪ داخلی خانه از شناسایی کلیک‌های پیکسلی ثابت جلوگیری می‌کند.
     half_inner = (sq_size * inner_fraction) / 2.0
     dx = r.uniform(-half_inner, half_inner)
     dy = r.uniform(-half_inner, half_inner)
