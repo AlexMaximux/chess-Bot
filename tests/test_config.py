@@ -14,6 +14,7 @@ def test_default_settings() -> None:
     assert settings.strength == "club"
     assert settings.input_mode == "cdp"
     assert settings.move_style == "mixed"
+    assert settings.play_as == "auto"
     assert settings.start_url == "https://www.chess.com/play/computer"
     assert settings.resolved_chrome_path().is_absolute()
     assert settings.resolved_profile_dir().is_absolute()
@@ -62,6 +63,11 @@ def test_invalid_values_raise_config_error(tmp_path: Path) -> None:
     # Invalid move style
     cfg_file.write_text(json.dumps({"move_style": "teleport"}), encoding="utf-8")
     with pytest.raises(ConfigError, match="move_style"):
+        load_config(config_path=cfg_file)
+
+    # Invalid play_as
+    cfg_file.write_text(json.dumps({"play_as": "spectator"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="play_as"):
         load_config(config_path=cfg_file)
 
     # Malformed JSON

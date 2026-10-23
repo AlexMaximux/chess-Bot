@@ -13,6 +13,7 @@ DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
 
 VALID_INPUT_MODES = {"cdp", "os"}
 VALID_MOVE_STYLES = {"drag", "click", "mixed"}
+VALID_PLAY_AS = {"auto", "white", "black"}
 
 
 class ConfigError(Exception):
@@ -31,6 +32,7 @@ class Settings:
     strength: str = "club"
     input_mode: str = "cdp"
     move_style: str = "mixed"
+    play_as: str = "auto"
 
     def resolved_chrome_path(self) -> Path:
         """Return the resolved Path for the Chrome executable."""
@@ -75,6 +77,13 @@ def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
         if style not in VALID_MOVE_STYLES:
             raise ConfigError(
                 f"Invalid move_style: {style!r}. Must be one of {sorted(VALID_MOVE_STYLES)}."
+            )
+
+    if "play_as" in cleaned:
+        play_as = cleaned["play_as"]
+        if play_as not in VALID_PLAY_AS:
+            raise ConfigError(
+                f"Invalid play_as: {play_as!r}. Must be one of {sorted(VALID_PLAY_AS)}."
             )
 
     for str_field in ("chrome_path", "stockfish_path", "profile_dir", "start_url", "strength"):

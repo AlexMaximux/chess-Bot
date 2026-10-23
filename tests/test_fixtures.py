@@ -51,6 +51,26 @@ def test_real_black_midgame_fixture() -> None:
     assert state.fen == "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4"
 
 
+def test_real_white_flipped_view_fixture() -> None:
+    fix_path = FIXTURES_DIR / "white_flipped_view.json"
+    assert fix_path.is_file(), f"Fixture file {fix_path} must exist"
+
+    raw = json.loads(fix_path.read_text(encoding="utf-8"))
+    snapshot = parse_snapshot(raw)
+    state = GameState.from_snapshot(snapshot)
+
+    assert snapshot.found is True
+    assert snapshot.flipped_class is True
+    assert snapshot.flipped_geometry is True
+    assert snapshot.our_color_hint == "w"
+    assert state.source == "moves"
+    # Even though board is flipped, our color must be WHITE
+    assert state.our_color == chess.WHITE
+    assert state.turn == chess.WHITE
+    assert state.is_our_turn is True
+    assert state.is_game_over is False
+
+
 def test_real_game_over_fixture() -> None:
     fix_path = FIXTURES_DIR / "game_over.json"
     assert fix_path.is_file(), f"Fixture file {fix_path} must exist"

@@ -79,6 +79,70 @@ def test_state_reconstruction_black_flipped() -> None:
     assert state.last_move == chess.Move.from_uci("c2c4")
 
 
+def test_state_play_as_override() -> None:
+    moves = ["e4", "e5"]
+    snap = make_snapshot(moves=moves, flipped_geometry=False)
+    # Even though geometry says white, play_as='black' overrides
+    state_b = GameState.from_snapshot(snap, play_as="black")
+    assert state_b.our_color == chess.BLACK
+
+    # And play_as='white' forces white
+    snap_f = make_snapshot(moves=moves, flipped_geometry=True)
+    state_w = GameState.from_snapshot(snap_f, play_as="white")
+    assert state_w.our_color == chess.WHITE
+
+
+def test_state_color_hint_preferred() -> None:
+    # snap has flipped_geometry=True (would imply black), but hint is 'w'
+    snap = Snapshot(
+        url="https://www.chess.com/play/computer",
+        found=True,
+        board_rect=Rect(0.0, 0.0, 400.0, 400.0),
+        flipped_class=True,
+        flipped_geometry=True,
+        pieces=[],
+        moves=[],
+        last_move_highlights=[],
+        game_over=False,
+        game_over_text=None,
+        promotion_open=False,
+        device_pixel_ratio=1.0,
+        window=WindowInfo(0, 0, 1000, 800, 1000, 800),
+        dragging=False,
+        our_color_hint="w",
+    )
+    # With start position pieces
+    b = chess.Board()
+    pieces = [
+        PieceInfo(
+            color="w" if p.color == chess.WHITE else "b",
+            type=p.symbol().lower(),
+            square=chess.square_name(sq),
+        )
+        for sq in chess.SQUARES
+        if (p := b.piece_at(sq)) is not None
+    ]
+    snap_with_pieces = Snapshot(
+        url=snap.url,
+        found=True,
+        board_rect=snap.board_rect,
+        flipped_class=snap.flipped_class,
+        flipped_geometry=snap.flipped_geometry,
+        pieces=pieces,
+        moves=[],
+        last_move_highlights=[],
+        game_over=False,
+        game_over_text=None,
+        promotion_open=False,
+        device_pixel_ratio=1.0,
+        window=snap.window,
+        dragging=False,
+        our_color_hint="w",
+    )
+    state = GameState.from_snapshot(snap_with_pieces)
+    assert state.our_color == chess.WHITE
+
+
 def test_state_castling_both_sides() -> None:
     moves = ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "O-O", "Nf6", "d3", "O-O"]
     snap = make_snapshot(moves=moves)

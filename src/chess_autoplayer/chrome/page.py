@@ -58,16 +58,13 @@ async def find_or_create_chess_tab(
 
     page_targets = [t for t in target_infos if t.get("type") == "page"]
 
-    # 1. Look for tab already on /play/computer
+    # 1. Look for tab already on an allowed /play/computer URL
     matching_computer: list[dict[str, Any]] = []
-    other_chess: list[dict[str, Any]] = []
 
     for t in page_targets:
         url = t.get("url", "")
         if is_allowed_url(url):
             matching_computer.append(t)
-        elif "chess.com" in url:
-            other_chess.append(t)
 
     if matching_computer:
         chosen = matching_computer[0]
@@ -79,19 +76,11 @@ async def find_or_create_chess_tab(
         )
         return str(target_id)
 
-    if other_chess:
-        chosen = other_chess[0]
-        target_id = chosen.get("targetId", "")
-        logger.info(
-            "Found existing chess.com tab: %s (%s). Navigating to %s",
-            target_id,
-            chosen.get("url"),
-            start_url,
-        )
-        return str(target_id)
-
-    # 2. No chess.com tab found; create one
-    logger.info("No chess.com tab found; creating new target with url %s", start_url)
+    # 2. Never hijack non-allowed tabs (e.g. /play/online); create a new target
+    logger.info(
+        "No tab found on an allowed /play/computer URL; creating new target with url %s",
+        start_url,
+    )
     create_res = await cdp.send("Target.createTarget", {"url": start_url})
     new_id = create_res.get("targetId")
     if not new_id or not isinstance(new_id, str):

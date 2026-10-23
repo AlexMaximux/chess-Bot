@@ -157,6 +157,10 @@ def test_cdp_connection_lost() -> None:
 
             with pytest.raises(ConnectionLost):
                 await task
+
+            # Next send must fail fast with ConnectionLost
+            with pytest.raises(ConnectionLost, match="closed"):
+                await client.send("Browser.getVersion")
         finally:
             await client.close()
             await server.stop()

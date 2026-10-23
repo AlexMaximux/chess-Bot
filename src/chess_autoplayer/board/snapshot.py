@@ -54,6 +54,7 @@ class Snapshot:
     device_pixel_ratio: float
     window: WindowInfo
     dragging: bool
+    our_color_hint: str | None = None
 
 
 def _parse_rect(raw: Any) -> Rect:
@@ -187,6 +188,10 @@ def parse_snapshot(raw: object) -> Snapshot:
     if not isinstance(dragging, bool):
         raise SnapshotError(f"Expected dragging to be bool, got {type(dragging).__name__}")
 
+    hint = raw.get("ourColorHint", raw.get("our_color_hint"))
+    if hint is not None and hint not in ("w", "b"):
+        raise SnapshotError(f"Expected ourColorHint to be 'w', 'b', or null, got {hint!r}")
+
     return Snapshot(
         url=url,
         found=found,
@@ -202,4 +207,5 @@ def parse_snapshot(raw: object) -> Snapshot:
         device_pixel_ratio=float(dpr),
         window=win,
         dragging=dragging,
+        our_color_hint=hint,
     )

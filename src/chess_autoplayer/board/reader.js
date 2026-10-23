@@ -30,7 +30,8 @@
       promotionOpen: false,
       devicePixelRatio: dpr,
       window: winInfo,
-      dragging: false
+      dragging: false,
+      ourColorHint: null
     };
   }
 
@@ -61,21 +62,18 @@
     let square = '';
 
     el.classList.forEach((cls) => {
-      // Piece class: w[pnbrqk] or b[pnbrqk]
       const pieceMatch = cls.match(/^([wb])([pnbrqk])$/);
       if (pieceMatch) {
         color = pieceMatch[1];
         ptype = pieceMatch[2];
       }
 
-      // Square class: square-XY where X=file (1-8), Y=rank (1-8)
       const sqMatch = cls.match(/^square-([1-8])([1-8])$/);
       if (sqMatch) {
         const fileChar = String.fromCharCode('a'.charCodeAt(0) + parseInt(sqMatch[1], 10) - 1);
         const rankChar = sqMatch[2];
         square = fileChar + rankChar;
 
-        // Geometric verification for flipped board
         const pRect = el.getBoundingClientRect();
         const pCenterY = pRect.top + pRect.height / 2;
         const bCenterY = rect.top + rect.height / 2;
@@ -88,9 +86,9 @@
           }
         } else if (rankChar === '8') {
           if (pCenterY > bCenterY) {
-            rank1TopVotes++; // rank 8 at bottom implies flipped
+            rank1TopVotes++;
           } else {
-            rank1BottomVotes++; // rank 8 at top implies normal
+            rank1BottomVotes++;
           }
         }
       }
@@ -103,7 +101,9 @@
 
   // Check coordinate labels if present in DOM / SVG
   let flippedGeometry = false;
-  const coordTexts = boardEl.querySelectorAll('text.coordinate-dark, text.coordinate-light, .coordinates text, .coordinates span');
+  const coordTexts = boardEl.querySelectorAll(
+    'text.coordinate-dark, text.coordinate-light, .coordinates text, .coordinates span'
+  );
   let coordFlippedFound = false;
 
   coordTexts.forEach((cEl) => {
@@ -138,42 +138,83 @@
     }
   }
 
-  // Parse moves list
-  const moves = [];
-  const moveNodes = document.querySelectorAll(
-    'wc-simple-move-list .node, .move-list-item, .move-list-wrapper .node, [class*="move-list"] .node'
-  );
+  // Determine ourColorHint independent of board orientation
+  let ourColorHint = null;
+  const topPlayerEl = document.querySelector('#board-layout-player-top');
+  const botPlayerEl = document.querySelector('#board-layout-player-bottom');
 
-  moveNodes.forEach((node) => {
-    // Only process individual move nodes (not parent turn containers if they exist)
-    if (node.classList.contains('white-move') || node.classList.contains('black-move') || node.classList.contains('node')) {
-      // Check for figurine icon
+  const topColor = flippedGeometry ? 'w' : 'b';
+  const botColor = flippedGeometry ? 'b' : 'w';
+
+  const botNameEl = document.querySelector(
+    '.bot-selection-header-title, .cc-sidebar-header-title, .bot-speech-content-botMessage, h1.cc-sidebar-header-title'
+  );
+  const botName = botNameEl ? botNameEl.textContent.trim().toLowerCase() : '';
+
+  let humanPosition = null; // 'top' or 'bot'
+  const isTopGuest = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes('guest');
+  const isBotGuest = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes('guest');
+
+  if (isTopGuest && !isBotGuest) {
+    humanPosition = 'top';
+  } else if (isBotGuest && !isTopGuest) {
+    humanPosition = 'bot';
+  } else if (botName) {
+    const isTopBot = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes(botName);
+    const isBotBot = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes(botName);
+    if (isTopBot && !isBotBot) humanPosition = 'bot';
+    else if (isBotBot && !isTopBot) humanPosition = 'top';
+  }
+
+  if (humanPosition === 'top') {
+    ourColorHint = topColor;
+  } else if (humanPosition === 'bot') {
+    ourColorHint = botColor;
+  } else {
+    const sideOptions = Array.from(document.querySelectorAll('.play-side-selector-option'));
+    if (sideOptions.length >= 3) {
+      if (sideOptions[0].classList.contains('cc-selected-border')) ourColorHint = 'w';
+      else if (sideOptions[2].classList.contains('cc-selected-border')) ourColorHint = 'b';
+    }
+  }
+
+  // Parse moves list scoped to matching wc-simple-move-list
+  const moves = [];
+  let moveListEl = null;
+  const boardId = boardEl.id;
+  if (boardId) {
+    moveListEl = document.querySelector(`wc-simple-move-list[board-id="${boardId}"]`);
+  }
+  if (!moveListEl) {
+    moveListEl = document.querySelector('wc-simple-move-list');
+  }
+
+  if (moveListEl) {
+    const hasMainLine = moveListEl.querySelector('.main-line-ply') !== null;
+    const plySelector = hasMainLine ? '.node.main-line-ply' : '.node.white-move, .node.black-move';
+    const moveNodes = moveListEl.querySelectorAll(plySelector);
+
+    moveNodes.forEach((node) => {
       const figurineEl = node.querySelector('[data-figurine]');
       let prefix = '';
       if (figurineEl) {
         prefix = figurineEl.getAttribute('data-figurine') || '';
       }
 
-      // Clone node or extract content
-      let text = '';
-      const contentEl = node.querySelector('.node-highlight-content, [class*="node-content"]') || node;
-      text = contentEl.textContent || '';
-      text = text.trim();
+      const contentEl = node.querySelector('.node-highlight-content') || node;
+      let text = (contentEl.textContent || '').trim();
 
-      // If figurine was used and not present in text
       if (prefix && !text.startsWith(prefix)) {
         text = prefix + text;
       }
 
-      // Clean annotations: strip ! and ? combinations (e.g., !?, ?!, ??, !!) but preserve check (+) and mate (#)
       text = text.replace(/[!?]+/g, '').trim();
 
-      // Ensure valid SAN token (exclude turn numbers like "1.", "2.")
       if (text && !/^\d+\.?$/.test(text)) {
         moves.push(text);
       }
-    }
-  });
+    });
+  }
 
   // Last move highlights
   const lastMoveHighlights = [];
@@ -192,7 +233,7 @@
     });
   });
 
-  // Game over detection
+  // Game over detection (only selectors specific to game-over, with text verification)
   let gameOver = false;
   let gameOverText = null;
   const gameOverSelectors = [
@@ -200,10 +241,6 @@
     '.game-over-modal-title-component',
     '.game-over-modal-shell-container',
     '.game-over-modal',
-    '.board-modal-component',
-    '.game-result-component',
-    '.board-dialog-component',
-    '.game-over-dialog-content',
     '[data-cy="game-over-modal"]',
     '.modal-game-over-component',
     '.game-over-header',
@@ -213,18 +250,21 @@
   for (const sel of gameOverSelectors) {
     const el = document.querySelector(sel);
     if (el) {
-      // Check visibility
       const style = window.getComputedStyle(el);
       if (style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-        gameOver = true;
         const titleEl = document.querySelector('.game-over-modal-title-component');
         const subEl = document.querySelector('.game-over-modal-subtitle-component');
-        if (titleEl && subEl) {
-          gameOverText = (titleEl.textContent || '').trim() + ' ' + (subEl.textContent || '').trim();
-        } else {
-          gameOverText = (el.textContent || '').trim().replace(/\s+/g, ' ');
+        if (titleEl || subEl) {
+          gameOver = true;
+          const t = titleEl ? titleEl.textContent.trim() : '';
+          const s = subEl ? subEl.textContent.trim() : '';
+          gameOverText = (t + ' ' + s).trim();
+          break;
+        } else if (el.textContent && /won|winner|checkmate|resignation|draw|stalemate/i.test(el.textContent)) {
+          gameOver = true;
+          gameOverText = el.textContent.trim().replace(/\s+/g, ' ');
+          break;
         }
-        break;
       }
     }
   }
@@ -268,6 +308,7 @@
     promotionOpen: promotionOpen,
     devicePixelRatio: dpr,
     window: winInfo,
-    dragging: isDragging
+    dragging: isDragging,
+    ourColorHint: ourColorHint
   };
 })()

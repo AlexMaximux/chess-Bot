@@ -29,20 +29,28 @@ class GameState:
         self.source: str = source  # "moves" or "pieces"
 
     @classmethod
-    def from_snapshot(cls, snapshot: Snapshot) -> "GameState":
+    def from_snapshot(cls, snapshot: Snapshot, play_as: str = "auto") -> "GameState":
         """Reconstruct GameState from a typed Snapshot."""
         if not snapshot.found:
             raise StateError("No board found on page")
 
-        # Determine our color from flipped_geometry, falling back to flipped_class
-        if snapshot.flipped_geometry != snapshot.flipped_class:
-            logger.warning(
-                "Flipped geometry (%s) disagrees with flipped class (%s)",
-                snapshot.flipped_geometry,
-                snapshot.flipped_class,
-            )
-
-        our_color = chess.BLACK if snapshot.flipped_geometry else chess.WHITE
+        # Determine our color: play_as override > our_color_hint > flipped_geometry
+        if play_as == "white":
+            our_color = chess.WHITE
+        elif play_as == "black":
+            our_color = chess.BLACK
+        elif snapshot.our_color_hint == "w":
+            our_color = chess.WHITE
+        elif snapshot.our_color_hint == "b":
+            our_color = chess.BLACK
+        else:
+            if snapshot.flipped_geometry != snapshot.flipped_class:
+                logger.warning(
+                    "Flipped geometry (%s) disagrees with flipped class (%s)",
+                    snapshot.flipped_geometry,
+                    snapshot.flipped_class,
+                )
+            our_color = chess.BLACK if snapshot.flipped_geometry else chess.WHITE
 
         # Convert snapshot pieces to dictionary: square_int -> chess.Piece
         dom_pieces: dict[int, chess.Piece] = {}

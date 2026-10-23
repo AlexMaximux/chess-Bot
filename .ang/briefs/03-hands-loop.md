@@ -58,6 +58,9 @@ Async state machine with states: `IDLE`, `BLOCKED_URL`, `WAITING_FOR_GAME`, `OPP
 - URL guard first: if not allowed → `BLOCKED_URL`, never move.
 - Our turn needs a **stable** read: same FEN in 2 reads ≥ 300 ms apart, `dragging` false, no
   unexpected promotion picker.
+- Trust: when `GameState.source == "pieces"` (move list and pieces disagree, e.g. mid-animation),
+  do not move until the same fallback FEN has been stable for ≥ 2 s; log a warning when it then moves.
+- Our color comes from `GameState.our_color` (which honours the `play_as` setting and `ourColorHint`).
 - `THINKING`: run the engine with `asyncio.to_thread`; wait the remaining think time
   (think time minus engine time); during the wait, re-read the page every 250 ms; if the
   position changed, pause, or stop → abandon the move.

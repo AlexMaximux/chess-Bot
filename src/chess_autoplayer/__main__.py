@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import chess
@@ -31,18 +32,28 @@ async def async_probe(save_fixture: str | None = None, output_json: bool = False
         print(f"Error launching/attaching to Chrome: {exc}", file=sys.stderr)
         return 1
 
-    cdp = await CDPClient.connect(ws_url)
+    try:
+        cdp = await CDPClient.connect(ws_url)
+    except Exception as exc:
+        print(f"Error connecting to Chrome CDP at {ws_url}: {exc}", file=sys.stderr)
+        return 1
+
     try:
         target_id = await find_or_create_chess_tab(cdp, settings.start_url)
         page = await ChessPage.attach(cdp, target_id)
 
-        # Allow brief moment for DOM rendering if newly loaded
         current_url = await page.url()
         url_allowed = is_allowed_url(current_url)
 
-        # Evaluate reader.js
-        reader_code = get_reader_js()
-        raw_snapshot = await page.evaluate_json(reader_code)
+        # Wait up to 10s for the board to render if tab newly loaded
+        start_wait = time.monotonic()
+        raw_snapshot: object = None
+        while time.monotonic() - start_wait < 10.0:
+            reader_code = get_reader_js()
+            raw_snapshot = await page.evaluate_json(reader_code)
+            if isinstance(raw_snapshot, dict) and raw_snapshot.get("found"):
+                break
+            await asyncio.sleep(0.5)
 
         if not isinstance(raw_snapshot, dict):
             print(f"Error: reader.js returned invalid data: {raw_snapshot!r}", file=sys.stderr)
@@ -90,7 +101,7 @@ async def async_probe(save_fixture: str | None = None, output_json: bool = False
         print(f"Game Over:       {snapshot.game_over} ({snapshot.game_over_text or 'No modal'})")
 
         try:
-            state = GameState.from_snapshot(snapshot)
+            state = GameState.from_snapshot(snapshot, play_as=settings.play_as)
             color_str = "White" if state.our_color == chess.WHITE else "Black"
             turn_str = "White" if state.turn == chess.WHITE else "Black"
             last_uci = state.last_move.uci() if state.last_move else "None"

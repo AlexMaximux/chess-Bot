@@ -98,7 +98,10 @@ class CDPClient:
                     )
         except (websockets.exceptions.ConnectionClosed, OSError) as exc:
             logger.debug("CDP connection closed: %s", exc)
+        except Exception as exc:
+            logger.error("Unexpected error in CDP listen loop: %s", exc)
         finally:
+            self._closed = True
             self._fail_all_pending("CDP connection closed")
 
     def _fail_all_pending(self, reason: str) -> None:
@@ -199,8 +202,8 @@ class CDPClient:
         self._fail_all_pending("CDP client closed by user")
         try:
             await self._ws.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Error closing websocket: %s", exc)
         self._read_task.cancel()
         try:
             await self._read_task
