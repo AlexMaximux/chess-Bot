@@ -21,21 +21,21 @@ def is_obvious_recapture(
             return False
         effective_last = board.peek()
 
-    # Check if last move was a capture
-    # In python-chess, we can verify by popping if move_stack has moves
-    if board.move_stack:
-        b_prev = board.copy()
-        b_prev.pop()
-        was_capture = b_prev.is_capture(effective_last)
-    else:
-        # If board came from FEN without move_stack, check if chosen move is capture on same square
-        was_capture = board.is_capture(chosen_move)
+    # Without a move stack, the prior board state cannot be known reliably
+    if not board.move_stack:
+        return False
+
+    b_prev = board.copy()
+    b_prev.pop()
+    was_capture = b_prev.is_capture(effective_last)
 
     if not was_capture:
         return False
 
     # Chosen move must capture on the same square
     if chosen_move.to_square != effective_last.to_square:
+        return False
+    if not board.is_capture(chosen_move):
         return False
 
     # Must be ≥ 150 cp better than second candidate (if at least 2 candidates exist)
@@ -99,14 +99,14 @@ def compute_think_time(
         # Typical 2–10 s, hard cap 25 s
         duration = min(25.0, max(0.5, duration))
 
-    # 4. Clock-aware constraints
+    # 4. Speed multiplier (applied before clock caps so caps are never violated)
+    effective_speed = max(0.01, speed)
+    duration = duration / effective_speed
+
+    # 5. Clock-aware constraints
     if clock_seconds is not None:
         duration = min(duration, max(0.2, clock_seconds * 0.05))
         if clock_seconds < 20.0:
             duration = min(duration, 1.5)
-
-    # 5. Speed multiplier
-    effective_speed = max(0.01, speed)
-    duration = duration / effective_speed
 
     return duration

@@ -5,7 +5,7 @@ import random
 import chess
 
 from chess_autoplayer.engine.stockfish import Line
-from chess_autoplayer.human.timing import compute_think_time
+from chess_autoplayer.human.timing import compute_think_time, is_obvious_recapture
 
 
 def make_dummy_candidates(moves: list[str]) -> list[Line]:
@@ -101,6 +101,23 @@ def test_clock_aware_caps() -> None:
     for _ in range(100):
         t = compute_think_time(board, candidates, chosen, clock_seconds=15.0, rng=rng)
         assert t <= 1.5
+
+    # Low speed (0.5) must never violate clock cap of 1.5 s when clock_seconds=10
+    for _ in range(100):
+        t = compute_think_time(board, candidates, chosen, clock_seconds=10.0, speed=0.5, rng=rng)
+        assert t <= 1.5
+
+
+def test_recapture_without_move_stack_returns_false() -> None:
+    # Board instantiated directly from FEN has an empty move_stack
+    board = chess.Board("rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2")
+    chosen = chess.Move.from_uci("d8d5")  # queen takes pawn on d5
+    candidates = [
+        Line(move=chosen, score_cp=0, mate_score=None, pv=[chosen]),
+        Line(move=chess.Move.from_uci("g8f6"), score_cp=-200, mate_score=None, pv=[]),
+    ]
+    # Without move stack, recapture check cannot know prior board state
+    assert not is_obvious_recapture(board, candidates, chosen)
 
 
 def test_speed_multiplier() -> None:

@@ -146,20 +146,65 @@
   const topColor = flippedGeometry ? 'w' : 'b';
   const botColor = flippedGeometry ? 'b' : 'w';
 
+  // 1. Try logged-in username from navigation/profile links and data attributes
+  let loggedInUsername = '';
+  const profileLinks = Array.from(
+    document.querySelectorAll(
+      '#sb a[href*="/member/"], nav a[href*="/member/"], .nav-menu-area a[href*="/member/"], a[href*="/member/"][data-tab="profile"], a.navigation-auth-profile[href*="/member/"], a[href*="/member/"]'
+    )
+  );
+  for (const link of profileLinks) {
+    const href = link.getAttribute('href') || '';
+    const m = href.match(/\/member\/([a-zA-Z0-9_\-]+)/i);
+    if (m && m[1]) {
+      const uname = m[1].toLowerCase();
+      if (uname !== 'settings' && uname !== 'membership' && uname !== 'home') {
+        loggedInUsername = uname;
+        break;
+      }
+    }
+  }
+  if (!loggedInUsername) {
+    const dataUserEl = document.querySelector('[data-user-username], [data-username]');
+    if (dataUserEl) {
+      loggedInUsername = (
+        dataUserEl.getAttribute('data-user-username') ||
+        dataUserEl.getAttribute('data-username') ||
+        ''
+      ).toLowerCase();
+    }
+  }
+
+  let humanPosition = null; // 'top' or 'bot'
+
+  if (loggedInUsername) {
+    const isTopUser = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes(loggedInUsername);
+    const isBotUser = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes(loggedInUsername);
+    if (isTopUser && !isBotUser) {
+      humanPosition = 'top';
+    } else if (isBotUser && !isTopUser) {
+      humanPosition = 'bot';
+    }
+  }
+
+  // 2. Fallback to Guest detection
+  if (!humanPosition) {
+    const isTopGuest = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes('guest');
+    const isBotGuest = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes('guest');
+    if (isTopGuest && !isBotGuest) {
+      humanPosition = 'top';
+    } else if (isBotGuest && !isTopGuest) {
+      humanPosition = 'bot';
+    }
+  }
+
+  // 3. Fallback to botName
   const botNameEl = document.querySelector(
     '.bot-selection-header-title, .cc-sidebar-header-title, .bot-speech-content-botMessage, h1.cc-sidebar-header-title'
   );
   const botName = botNameEl ? botNameEl.textContent.trim().toLowerCase() : '';
 
-  let humanPosition = null; // 'top' or 'bot'
-  const isTopGuest = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes('guest');
-  const isBotGuest = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes('guest');
-
-  if (isTopGuest && !isBotGuest) {
-    humanPosition = 'top';
-  } else if (isBotGuest && !isTopGuest) {
-    humanPosition = 'bot';
-  } else if (botName) {
+  if (!humanPosition && botName) {
     const isTopBot = topPlayerEl && topPlayerEl.innerText.toLowerCase().includes(botName);
     const isBotBot = botPlayerEl && botPlayerEl.innerText.toLowerCase().includes(botName);
     if (isTopBot && !isBotBot) humanPosition = 'bot';

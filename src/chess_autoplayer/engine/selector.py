@@ -95,9 +95,53 @@ def select_move(
         pool = [candidates[0]]
 
     # 5. Guard against allowing mate-in-1
+    # Priority order:
+    # 1) Safe moves in pool
+    # 2) Safe moves among all candidates (lowest loss)
+    # 3) Any safe legal move not in candidates (prefer checks/captures, else first)
+    # 4) Only then the unsafe pool
     safe_pool = [c for c in pool if not allows_mate_in_1(board, c.move)]
     if safe_pool:
         pool = safe_pool
+    else:
+        safe_candidates = [c for c in candidates if not allows_mate_in_1(board, c.move)]
+        if safe_candidates:
+            best_safe = min(safe_candidates, key=lambda c: best_score - c.score_cp)
+            idx = candidates.index(best_safe)
+            return Decision(
+                move=best_safe.move,
+                candidates=candidates,
+                losses=losses,
+                chosen_index=idx,
+                reason="safe_candidate_fallback",
+            )
+        candidate_moves = {c.move for c in candidates}
+        other_legal = [m for m in board.legal_moves if m not in candidate_moves]
+        safe_legal = [m for m in other_legal if not allows_mate_in_1(board, m)]
+        if safe_legal:
+
+            def _legal_move_priority(m: chess.Move) -> tuple[int, int]:
+                # Priority: 0 if check, 1 if capture, 2 other
+                is_cap = board.is_capture(m)
+                b_next = board.copy()
+                b_next.push(m)
+                is_chk = b_next.is_check()
+                if is_chk:
+                    return (0, 0)
+                if is_cap:
+                    return (1, 0)
+                return (2, 0)
+
+            safe_legal.sort(key=_legal_move_priority)
+            chosen_move = safe_legal[0]
+            return Decision(
+                move=chosen_move,
+                candidates=candidates,
+                losses=losses,
+                chosen_index=-1,
+                reason="safe_legal_move_fallback",
+            )
+        # If no move is safe, fall through to unsafe pool
 
     # 6. Temperature selection (Softmax or best)
     prefix = "blunder" if is_blunder else "standard"

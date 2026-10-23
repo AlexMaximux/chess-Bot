@@ -137,6 +137,34 @@ def test_never_allows_mate_in_one_when_avoidable() -> None:
         assert dec.move == move_safe
 
 
+def test_pool_all_mate_picks_worse_safe_candidate() -> None:
+    # Black threatens Qe1#
+    # f3g5 and f3e5 allow mate-in-1, but h2h3 is safe
+    board = chess.Board("4r1k1/8/8/8/8/5N2/4q1PP/6K1 w - - 0 1")
+    m1 = chess.Move.from_uci("f3g5")  # allows Qe1#
+    m2 = chess.Move.from_uci("f3e5")  # allows Qe1#
+    m_safe = chess.Move.from_uci("h2h3")  # safe
+
+    # c1 and c2 are in pool (loss 0 and 20 <= max_cp_loss 50), c_safe is worse (loss 120 > 50)
+    c1 = Line(move=m1, score_cp=200, mate_score=None, pv=[m1])
+    c2 = Line(move=m2, score_cp=180, mate_score=None, pv=[m2])
+    c_safe = Line(move=m_safe, score_cp=80, mate_score=None, pv=[m_safe])
+
+    prof = Profile(
+        name="test",
+        limit_strength=True,
+        elo=1500,
+        time_limit=0.2,
+        multipv=3,
+        temperature=20.0,
+        max_cp_loss=50,
+        blunder_chance=0.0,
+    )
+    dec = select_move(board, [c1, c2, c_safe], prof, rng=random.Random(42))
+    assert dec.move == m_safe
+    assert "safe_candidate" in dec.reason
+
+
 def test_black_to_move_eval() -> None:
     board = chess.Board("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1")
     m1 = chess.Move.from_uci("e7e5")
