@@ -269,7 +269,6 @@ async def async_run(
     input_mode: str | None = None,
     move_style: str | None = None,
     seed: int | None = None,
-    start_url: str | None = None,
 ) -> int:
     """Run autonomous chess bot loop."""
     base_settings = load_config()
@@ -277,13 +276,14 @@ async def async_run(
     if strength is not None:
         kwargs["strength"] = strength
     if speed is not None:
+        if speed < 0.1 or speed > 5.0:
+            print(f"Error: --speed {speed} must be between 0.1 and 5.0", file=sys.stderr)
+            return 1
         kwargs["speed"] = speed
     if input_mode is not None:
         kwargs["input_mode"] = input_mode
     if move_style is not None:
         kwargs["move_style"] = move_style
-    if start_url is not None:
-        kwargs["start_url"] = start_url
 
     settings = replace(base_settings, **kwargs)
 
@@ -299,14 +299,20 @@ async def async_run(
         print(f"Error connecting to Chrome CDP at {ws_url}: {exc}", file=sys.stderr)
         return 1
 
-    target_id = await find_or_create_chess_tab(cdp, settings.start_url)
-    page = await ChessPage.attach(cdp, target_id)
-
     engine = Engine(settings.resolved_stockfish_path(), profile=settings.strength)
     try:
         engine.start()
     except EngineError as exc:
         print(f"Stockfish engine error: {exc}", file=sys.stderr)
+        await cdp.close()
+        return 1
+
+    try:
+        target_id = await find_or_create_chess_tab(cdp, settings.start_url)
+        page = await ChessPage.attach(cdp, target_id)
+    except Exception as exc:
+        print(f"Error finding or attaching to chess tab: {exc}", file=sys.stderr)
+        engine.close()
         await cdp.close()
         return 1
 
@@ -325,6 +331,24 @@ async def async_run(
             return 1
     else:
         input_handler = CDPInput(page)
+
+    async def reconnect_factory() -> tuple[ChessPage, MoveInput]:
+        from chess_autoplayer.chrome.cdp import ConnectionLost
+        from chess_autoplayer.chrome.launcher import get_browser_ws_url
+
+        ws = await get_browser_ws_url(settings.debug_port, timeout=1.0)
+        if not ws:
+            raise ConnectionLost("Chrome was closed or debug port is not answering")
+        new_cdp = await CDPClient.connect(ws)
+        new_target_id = await find_or_create_chess_tab(new_cdp, settings.start_url)
+        new_page = await ChessPage.attach(new_cdp, new_target_id)
+        if settings.input_mode == "os":
+            from chess_autoplayer.input.os_input import OSInput
+
+            new_inp: MoveInput = OSInput(new_page)
+        else:
+            new_inp = CDPInput(new_page)
+        return new_page, new_inp
 
     rng = random.Random(seed) if seed is not None else random.Random()
 
@@ -351,6 +375,7 @@ async def async_run(
         settings=settings,
         event_callback=on_event,
         rng=rng,
+        reconnect_factory=reconnect_factory,
     )
 
     print(
@@ -428,6 +453,7 @@ def main() -> None:
     analyse_parser.add_argument(
         "--strength",
         type=str,
+        choices=list(PROFILES.keys()),
         default=None,
         metavar="NAME",
         help="Strength profile: beginner, casual, club, strong, master, max",
@@ -448,6 +474,7 @@ def main() -> None:
     run_parser.add_argument(
         "--strength",
         type=str,
+        choices=list(PROFILES.keys()),
         default=None,
         metavar="NAME",
         help="Strength profile: beginner, casual, club, strong, master, max",
@@ -457,7 +484,7 @@ def main() -> None:
         type=float,
         default=None,
         metavar="X",
-        help="Speed multiplier (default: 1.0)",
+        help="Speed multiplier (0.1 to 5.0, default: 1.0)",
     )
     run_parser.add_argument(
         "--input",
@@ -479,13 +506,6 @@ def main() -> None:
         default=None,
         metavar="N",
         help="Random seed for move choice and human mouse trajectories",
-    )
-    run_parser.add_argument(
-        "--start-url",
-        type=str,
-        default=None,
-        metavar="URL",
-        help="Initial URL to attach to or navigate (default: https://www.chess.com/play/computer)",
     )
     run_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose debug logging"
@@ -519,7 +539,6 @@ def main() -> None:
                 input_mode=args.input_mode,
                 move_style=args.move_style,
                 seed=args.seed,
-                start_url=args.start_url,
             )
         )
         sys.exit(exit_code)

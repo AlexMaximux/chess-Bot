@@ -6,6 +6,7 @@ import logging
 import math
 import random
 import subprocess
+import time
 from typing import Any
 
 import chess
@@ -209,10 +210,15 @@ class OSInput:
         hover_path = generate_hover_path(
             cur_screen, src_screen, square_size=sq_size * self.calibration.scale_x, rng=r
         )
+        t_hov_start = time.monotonic()
+        cum_hov_ms = 0.0
         for pt in hover_path:
             self._check_safety()
-            if pt.dt_ms > 0:
-                await asyncio.sleep(pt.dt_ms / 1000.0)
+            cum_hov_ms += pt.dt_ms
+            elapsed = time.monotonic() - t_hov_start
+            sleep_s = (cum_hov_ms / 1000.0) - elapsed
+            if sleep_s > 0.001:
+                await asyncio.sleep(sleep_s)
             post_cg_mouse_event(Quartz.kCGEventMouseMoved, pt.x, pt.y)
             self.last_screen_pos = (pt.x, pt.y)
 
@@ -225,45 +231,79 @@ class OSInput:
             style = "drag" if r.random() < 0.75 else "click"
 
         if style == "drag":
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, src_screen[0], src_screen[1])
-            self._mouse_pressed = True
-            await asyncio.sleep(r.uniform(0.030, 0.090))
+            try:
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, src_screen[0], src_screen[1])
+                self._mouse_pressed = True
+                await asyncio.sleep(r.uniform(0.030, 0.090))
 
-            drag_path = generate_drag_path(
-                src_screen, dst_screen, square_size=sq_size * self.calibration.scale_x, rng=r
-            )
-            for pt in drag_path:
-                self._check_safety()
-                if pt.dt_ms > 0:
-                    await asyncio.sleep(pt.dt_ms / 1000.0)
-                post_cg_mouse_event(Quartz.kCGEventLeftMouseDragged, pt.x, pt.y)
-                self.last_screen_pos = (pt.x, pt.y)
+                drag_path = generate_drag_path(
+                    src_screen, dst_screen, square_size=sq_size * self.calibration.scale_x, rng=r
+                )
+                t_drag_start = time.monotonic()
+                cum_drag_ms = 0.0
+                for pt in drag_path:
+                    self._check_safety()
+                    cum_drag_ms += pt.dt_ms
+                    elapsed = time.monotonic() - t_drag_start
+                    sleep_s = (cum_drag_ms / 1000.0) - elapsed
+                    if sleep_s > 0.001:
+                        await asyncio.sleep(sleep_s)
+                    post_cg_mouse_event(Quartz.kCGEventLeftMouseDragged, pt.x, pt.y)
+                    self.last_screen_pos = (pt.x, pt.y)
 
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, dst_screen[0], dst_screen[1])
-            self._mouse_pressed = False
-            self.last_screen_pos = dst_screen
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, dst_screen[0], dst_screen[1])
+                self._mouse_pressed = False
+                self.last_screen_pos = dst_screen
+            finally:
+                if self._mouse_pressed:
+                    try:
+                        pos = self.last_screen_pos or dst_screen
+                        post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, pos[0], pos[1])
+                    except Exception as rel_exc:
+                        logger.debug("Failed to release OS mouse in finally: %s", rel_exc)
+                    finally:
+                        self._mouse_pressed = False
 
         else:
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, src_screen[0], src_screen[1])
-            await asyncio.sleep(r.uniform(0.030, 0.070))
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, src_screen[0], src_screen[1])
+            try:
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, src_screen[0], src_screen[1])
+                self._mouse_pressed = True
+                await asyncio.sleep(r.uniform(0.030, 0.070))
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, src_screen[0], src_screen[1])
+                self._mouse_pressed = False
 
-            move_path = generate_hover_path(
-                src_screen, dst_screen, square_size=sq_size * self.calibration.scale_x, rng=r
-            )
-            for pt in move_path:
+                move_path = generate_hover_path(
+                    src_screen, dst_screen, square_size=sq_size * self.calibration.scale_x, rng=r
+                )
+                t_move_start = time.monotonic()
+                cum_move_ms = 0.0
+                for pt in move_path:
+                    self._check_safety()
+                    cum_move_ms += pt.dt_ms
+                    elapsed = time.monotonic() - t_move_start
+                    sleep_s = (cum_move_ms / 1000.0) - elapsed
+                    if sleep_s > 0.001:
+                        await asyncio.sleep(sleep_s)
+                    post_cg_mouse_event(Quartz.kCGEventMouseMoved, pt.x, pt.y)
+                    self.last_screen_pos = (pt.x, pt.y)
+
+                await asyncio.sleep(r.uniform(0.040, 0.120))
                 self._check_safety()
-                if pt.dt_ms > 0:
-                    await asyncio.sleep(pt.dt_ms / 1000.0)
-                post_cg_mouse_event(Quartz.kCGEventMouseMoved, pt.x, pt.y)
-                self.last_screen_pos = (pt.x, pt.y)
-
-            await asyncio.sleep(r.uniform(0.040, 0.120))
-            self._check_safety()
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, dst_screen[0], dst_screen[1])
-            await asyncio.sleep(r.uniform(0.030, 0.070))
-            post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, dst_screen[0], dst_screen[1])
-            self.last_screen_pos = dst_screen
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseDown, dst_screen[0], dst_screen[1])
+                self._mouse_pressed = True
+                await asyncio.sleep(r.uniform(0.030, 0.070))
+                post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, dst_screen[0], dst_screen[1])
+                self._mouse_pressed = False
+                self.last_screen_pos = dst_screen
+            finally:
+                if self._mouse_pressed:
+                    try:
+                        pos = self.last_screen_pos or dst_screen
+                        post_cg_mouse_event(Quartz.kCGEventLeftMouseUp, pos[0], pos[1])
+                    except Exception as rel_exc:
+                        logger.debug("Failed to release OS mouse in finally: %s", rel_exc)
+                    finally:
+                        self._mouse_pressed = False
 
         if move.promotion and ctx.promotion_options:
             wanted = chess.piece_symbol(move.promotion).lower()

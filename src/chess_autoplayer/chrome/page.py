@@ -58,13 +58,12 @@ async def find_or_create_chess_tab(
 
     page_targets = [t for t in target_infos if t.get("type") == "page"]
 
-    # 0. If start_url is explicitly configured to a non-allowed URL (e.g. for testing URL guard)
     if not is_allowed_url(start_url):
-        for t in page_targets:
-            if t.get("url", "").startswith(start_url):
-                return str(t.get("targetId", ""))
-        create_res = await cdp.send("Target.createTarget", {"url": start_url})
-        return str(create_res.get("targetId", ""))
+        logger.warning(
+            "start_url %r is not an allowed URL; using default https://www.chess.com/play/computer",
+            start_url,
+        )
+        start_url = "https://www.chess.com/play/computer"
 
     # 1. Look for tab already on an allowed /play/computer URL
     matching_computer: list[dict[str, Any]] = []

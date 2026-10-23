@@ -150,8 +150,13 @@
   let loggedInUsername = '';
   const profileLinks = Array.from(
     document.querySelectorAll(
-      '#sb a[href*="/member/"], nav a[href*="/member/"], .nav-menu-area a[href*="/member/"], a[href*="/member/"][data-tab="profile"], a.navigation-auth-profile[href*="/member/"], a[href*="/member/"]'
+      '#sb a[href*="/member/"], nav a[href*="/member/"], .nav-menu-area a[href*="/member/"], [data-tab="profile"] a[href*="/member/"], a.navigation-auth-profile[href*="/member/"], .sidebar a[href*="/member/"]'
     )
+  ).filter(
+    (el) =>
+      !el.closest(
+        '#board-layout-player-top, #board-layout-player-bottom, #board-layout-main, wc-chess-board, .board'
+      )
   );
   for (const link of profileLinks) {
     const href = link.getAttribute('href') || '';

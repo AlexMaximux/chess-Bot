@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import random
+import time
 from typing import Any, Protocol
 
 import chess
@@ -84,67 +85,113 @@ class CDPInput:
 
         # 1. Hover move to source square
         hover_path = generate_hover_path(self.last_pos, src_pt, square_size=sq_size, rng=r)
+        t_hov_start = time.monotonic()
+        cum_hov_ms = 0.0
         for pt in hover_path:
-            if pt.dt_ms > 0:
-                await asyncio.sleep(pt.dt_ms / 1000.0)
+            cum_hov_ms += pt.dt_ms
+            elapsed = time.monotonic() - t_hov_start
+            sleep_s = (cum_hov_ms / 1000.0) - elapsed
+            if sleep_s > 0.001:
+                await asyncio.sleep(sleep_s)
             await self._dispatch("mouseMoved", pt.x, pt.y, button="none", buttons=0)
+            self.last_pos = (pt.x, pt.y)
         self.last_pos = src_pt
 
         # Hover delay before press: 40-120 ms
         await asyncio.sleep(r.uniform(0.040, 0.120))
 
         if style == "drag":
-            # Press left button on source
-            await self._dispatch(
-                "mousePressed", src_pt[0], src_pt[1], button="left", buttons=1, click_count=1
-            )
-            self._mouse_pressed = True
+            try:
+                # Press left button on source
+                await self._dispatch(
+                    "mousePressed", src_pt[0], src_pt[1], button="left", buttons=1, click_count=1
+                )
+                self._mouse_pressed = True
 
-            # Hold delay before drag starts: 30-90 ms
-            await asyncio.sleep(r.uniform(0.030, 0.090))
+                # Hold delay before drag starts: 30-90 ms
+                await asyncio.sleep(r.uniform(0.030, 0.090))
 
-            # Drag path to destination
-            drag_path = generate_drag_path(src_pt, dst_pt, square_size=sq_size, rng=r)
-            for pt in drag_path:
-                if pt.dt_ms > 0:
-                    await asyncio.sleep(pt.dt_ms / 1000.0)
-                await self._dispatch("mouseMoved", pt.x, pt.y, button="left", buttons=1)
+                # Drag path to destination
+                drag_path = generate_drag_path(src_pt, dst_pt, square_size=sq_size, rng=r)
+                t_drag_start = time.monotonic()
+                cum_drag_ms = 0.0
+                for pt in drag_path:
+                    cum_drag_ms += pt.dt_ms
+                    elapsed = time.monotonic() - t_drag_start
+                    sleep_s = (cum_drag_ms / 1000.0) - elapsed
+                    if sleep_s > 0.001:
+                        await asyncio.sleep(sleep_s)
+                    await self._dispatch("mouseMoved", pt.x, pt.y, button="left", buttons=1)
+                    self.last_pos = (pt.x, pt.y)
 
-            # Release left button on destination
-            await self._dispatch(
-                "mouseReleased", dst_pt[0], dst_pt[1], button="left", buttons=0, click_count=1
-            )
-            self._mouse_pressed = False
-            self.last_pos = dst_pt
+                # Release left button on destination
+                await self._dispatch(
+                    "mouseReleased", dst_pt[0], dst_pt[1], button="left", buttons=0, click_count=1
+                )
+                self._mouse_pressed = False
+                self.last_pos = dst_pt
+            finally:
+                if self._mouse_pressed:
+                    try:
+                        pos = self.last_pos or dst_pt
+                        await self._dispatch(
+                            "mouseReleased", pos[0], pos[1], button="left", buttons=0, click_count=1
+                        )
+                    except Exception as rel_exc:
+                        logger.debug("Failed to release mouse button in finally: %s", rel_exc)
+                    finally:
+                        self._mouse_pressed = False
 
         else:
             # Click style: click on source, move to dest, click on dest
-            await self._dispatch(
-                "mousePressed", src_pt[0], src_pt[1], button="left", buttons=1, click_count=1
-            )
-            await asyncio.sleep(r.uniform(0.030, 0.070))
-            await self._dispatch(
-                "mouseReleased", src_pt[0], src_pt[1], button="left", buttons=0, click_count=1
-            )
+            try:
+                await self._dispatch(
+                    "mousePressed", src_pt[0], src_pt[1], button="left", buttons=1, click_count=1
+                )
+                self._mouse_pressed = True
+                await asyncio.sleep(r.uniform(0.030, 0.070))
+                await self._dispatch(
+                    "mouseReleased", src_pt[0], src_pt[1], button="left", buttons=0, click_count=1
+                )
+                self._mouse_pressed = False
 
-            # Move path to target
-            move_path = generate_hover_path(src_pt, dst_pt, square_size=sq_size, rng=r)
-            for pt in move_path:
-                if pt.dt_ms > 0:
-                    await asyncio.sleep(pt.dt_ms / 1000.0)
-                await self._dispatch("mouseMoved", pt.x, pt.y, button="none", buttons=0)
-            self.last_pos = dst_pt
+                # Move path to target
+                move_path = generate_hover_path(src_pt, dst_pt, square_size=sq_size, rng=r)
+                t_move_start = time.monotonic()
+                cum_move_ms = 0.0
+                for pt in move_path:
+                    cum_move_ms += pt.dt_ms
+                    elapsed = time.monotonic() - t_move_start
+                    sleep_s = (cum_move_ms / 1000.0) - elapsed
+                    if sleep_s > 0.001:
+                        await asyncio.sleep(sleep_s)
+                    await self._dispatch("mouseMoved", pt.x, pt.y, button="none", buttons=0)
+                    self.last_pos = (pt.x, pt.y)
+                self.last_pos = dst_pt
 
-            # Hover delay on target
-            await asyncio.sleep(r.uniform(0.040, 0.120))
+                # Hover delay on target
+                await asyncio.sleep(r.uniform(0.040, 0.120))
 
-            await self._dispatch(
-                "mousePressed", dst_pt[0], dst_pt[1], button="left", buttons=1, click_count=1
-            )
-            await asyncio.sleep(r.uniform(0.030, 0.070))
-            await self._dispatch(
-                "mouseReleased", dst_pt[0], dst_pt[1], button="left", buttons=0, click_count=1
-            )
+                await self._dispatch(
+                    "mousePressed", dst_pt[0], dst_pt[1], button="left", buttons=1, click_count=1
+                )
+                self._mouse_pressed = True
+                await asyncio.sleep(r.uniform(0.030, 0.070))
+                await self._dispatch(
+                    "mouseReleased", dst_pt[0], dst_pt[1], button="left", buttons=0, click_count=1
+                )
+                self._mouse_pressed = False
+            finally:
+                if self._mouse_pressed:
+                    try:
+                        pos = self.last_pos or dst_pt
+                        await self._dispatch(
+                            "mouseReleased", pos[0], pos[1], button="left", buttons=0, click_count=1
+                        )
+                    except Exception as rel_exc:
+                        logger.debug("Failed to release mouse button in click finally: %s", rel_exc)
+                    finally:
+                        self._mouse_pressed = False
 
         # Handle promotion piece selection if picker options are already known
         if move.promotion and ctx.promotion_options:

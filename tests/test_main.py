@@ -71,8 +71,25 @@ def test_cli_analyse_invalid_strength() -> None:
         capture_output=True,
         text=True,
     )
+    assert res.returncode != 0
+    assert "invalid choice" in res.stderr
+
+
+def test_cli_run_invalid_speed() -> None:
+    res = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "chess_autoplayer",
+            "run",
+            "--speed",
+            "10.0",
+        ],
+        capture_output=True,
+        text=True,
+    )
     assert res.returncode == 1
-    assert "Unknown strength profile" in res.stderr
+    assert "must be between 0.1 and 5.0" in res.stderr
 
 
 def test_cli_run_help() -> None:

@@ -103,6 +103,12 @@ class Engine:
         self._engine.configure(options)
         logger.debug("Configured Stockfish with profile %s: %s", self.profile.name, options)
 
+    def set_profile(self, profile: Profile | str) -> None:
+        """Update strength profile and reconfigure UCI options if engine is running."""
+        self.profile = get_profile(profile) if isinstance(profile, str) else profile
+        if self._engine is not None:
+            self._configure_engine()
+
     def analyse(self, board: chess.Board) -> list[Line]:
         """Perform MultiPV analysis on the given position. Restarts once if crashed."""
         if self._engine is None:

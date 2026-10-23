@@ -115,3 +115,41 @@ async def test_cdp_input_close_releases_button() -> None:
     assert cdp_input._mouse_pressed is False
     assert commander.events[-1]["type"] == "mouseReleased"
     assert commander.events[-1]["x"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_cdp_input_failure_mid_drag_releases_button() -> None:
+    class FailingCommander:
+        def __init__(self) -> None:
+            self.events: list[dict[str, Any]] = []
+            self.failed = False
+
+        async def send_command(
+            self, method: str, params: dict[str, Any] | None = None, timeout: float = 10.0
+        ) -> dict[str, Any]:
+            if method == "Input.dispatchMouseEvent" and params is not None:
+                self.events.append(params)
+                # Fail on first mouseMoved during dragging (buttons == 1)
+                if (
+                    not self.failed
+                    and params.get("type") == "mouseMoved"
+                    and params.get("buttons") == 1
+                ):
+                    self.failed = True
+                    raise RuntimeError("CDP network failure mid-drag")
+            return {}
+
+    failing_cmd = FailingCommander()
+    cdp_input = CDPInput(failing_cmd)
+    board_rect = Rect(x=100.0, y=100.0, width=800.0, height=800.0)
+    ctx = MoveContext(board_rect=board_rect, flipped=False, style="drag")
+    move = chess.Move.from_uci("e2e4")
+
+    with pytest.raises(RuntimeError, match="CDP network failure mid-drag"):
+        await cdp_input.perform_move(move, ctx)
+
+    # _mouse_pressed must be restored to False
+    assert cdp_input._mouse_pressed is False
+    # finally block must have sent mouseReleased
+    released = [e for e in failing_cmd.events if e["type"] == "mouseReleased"]
+    assert len(released) >= 1

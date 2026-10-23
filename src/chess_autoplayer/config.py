@@ -97,8 +97,12 @@ def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
 
     if "speed" in cleaned:
         speed = cleaned["speed"]
-        if not isinstance(speed, (int, float)) or isinstance(speed, bool) or speed <= 0:
-            raise ConfigError(f"Invalid speed: {speed!r}. Must be a positive number.")
+        if (
+            not isinstance(speed, (int, float))
+            or isinstance(speed, bool)
+            or not (0.1 <= speed <= 5.0)
+        ):
+            raise ConfigError(f"Invalid speed: {speed!r}. Must be between 0.1 and 5.0.")
         cleaned["speed"] = float(speed)
 
     for str_field in ("chrome_path", "stockfish_path", "profile_dir", "start_url"):
@@ -106,6 +110,16 @@ def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
             val = cleaned[str_field]
             if not isinstance(val, str) or not val.strip():
                 raise ConfigError(f"Field {str_field!r} must be a non-empty string.")
+
+    if "start_url" in cleaned:
+        from chess_autoplayer.chrome.page import is_allowed_url
+
+        if not is_allowed_url(cleaned["start_url"]):
+            logger.warning(
+                "Configured start_url %r is not an allowed URL; using default.",
+                cleaned["start_url"],
+            )
+            cleaned["start_url"] = Settings.start_url
 
     return cleaned
 

@@ -259,6 +259,14 @@ def test_find_or_create_tab_ignores_online_and_creates_new() -> None:
             target_id = await find_or_create_chess_tab(client)
             assert target_id == "newly_created_tab"
             assert server.created_urls == ["https://www.chess.com/play/computer"]
+
+            # Even if caller passes a non-allowed start_url, it must fall back to /play/computer
+            server.created_urls.clear()
+            target_id2 = await find_or_create_chess_tab(
+                client, start_url="https://www.chess.com/play/online"
+            )
+            assert target_id2 == "newly_created_tab"
+            assert server.created_urls == ["https://www.chess.com/play/computer"]
         finally:
             await client.close()
             await server.stop()

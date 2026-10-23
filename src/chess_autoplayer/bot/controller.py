@@ -4,7 +4,8 @@ import asyncio
 import logging
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 import chess
 
@@ -23,7 +24,7 @@ from chess_autoplayer.bot.events import (
 from chess_autoplayer.chrome.cdp import CDPError, ConnectionLost
 from chess_autoplayer.chrome.page import ChessPage, is_allowed_url
 from chess_autoplayer.config import Settings
-from chess_autoplayer.engine.profiles import get_profile
+from chess_autoplayer.engine.profiles import PROFILES, get_profile
 from chess_autoplayer.engine.selector import select_move
 from chess_autoplayer.engine.stockfish import Engine
 from chess_autoplayer.human.timing import compute_think_time
@@ -31,6 +32,8 @@ from chess_autoplayer.input.base import MoveContext, MoveInput
 from chess_autoplayer.input.cdp_input import CDPInput
 
 logger = logging.getLogger(__name__)
+
+ReconnectFactory = Callable[[], Awaitable[tuple[ChessPage, MoveInput]]]
 
 
 class BotController:
@@ -44,6 +47,7 @@ class BotController:
         settings: Settings,
         event_callback: Callable[[BotEvent], None] | None = None,
         rng: random.Random | None = None,
+        reconnect_factory: ReconnectFactory | None = None,
     ) -> None:
         self.page = page
         self.engine = engine
@@ -51,6 +55,7 @@ class BotController:
         self.settings = settings
         self.event_callback = event_callback
         self.rng = rng if rng is not None else random.Random()
+        self.reconnect_factory = reconnect_factory
 
         self.state = BotState.IDLE
         self._paused = False
@@ -62,6 +67,7 @@ class BotController:
         self._speed = settings.speed
         self._move_style = settings.move_style
         self._input_mode = settings.input_mode
+        self._pending_input_mode: str | None = None
 
         # Stabilization state
         self._last_stable_fen: str | None = None
@@ -73,8 +79,23 @@ class BotController:
         self._last_seen_ply: int = -1
         self._retry_count: int = 0
         self._override_style: str | None = None
+        self._game_over_latch: bool = False
+        self._game_over_final_ply: int = -1
         self.verify_timeout: float = 3.0
         self.pieces_fallback_wait: float = 2.0
+        self.backoffs: list[float] = [1.0, 2.0, 5.0, 10.0]
+
+    @property
+    def strength(self) -> str:
+        return self._strength
+
+    @property
+    def speed(self) -> float:
+        return self._speed
+
+    @property
+    def input_mode(self) -> str:
+        return self._input_mode
 
     def _emit(self, event: BotEvent) -> None:
         """Dispatch a typed event to callback and logger."""
@@ -119,21 +140,33 @@ class BotController:
 
     def set_strength(self, strength: str) -> None:
         """Update strength profile name."""
+        if strength not in PROFILES:
+            msg = f"Unknown strength profile: {strength!r}"
+            logger.warning(msg)
+            self._emit(ErrorEvent(msg))
+            return
         self._strength = strength
+        self.engine.set_profile(strength)
 
     def set_speed(self, speed: float) -> None:
         """Update speed multiplier."""
-        self._speed = max(0.01, speed)
+        self._speed = max(0.1, min(5.0, speed))
 
     def set_input_mode(self, mode: str) -> None:
-        """Switch input mode ('cdp' or 'os')."""
-        self._input_mode = mode
-        if mode == "cdp":
-            self.input_handler = CDPInput(self.page)
-        elif mode == "os":
-            from chess_autoplayer.input.os_input import OSInput
+        """Schedule input mode change ('cdp' or 'os') from the next move."""
+        if mode not in ("cdp", "os"):
+            msg = f"Invalid input mode: {mode!r}"
+            self._emit(ErrorEvent(msg))
+            return
+        if mode == "os":
+            from chess_autoplayer.input.os_input import is_accessibility_trusted
 
-            self.input_handler = OSInput(self.page)
+            if not is_accessibility_trusted():
+                msg = "macOS Accessibility permission is not granted; keeping current input mode."
+                logger.warning(msg)
+                self._emit(ErrorEvent(msg))
+                return
+        self._pending_input_mode = mode
 
     async def start(self) -> None:
         """Start the autonomous controller loop task."""
@@ -157,8 +190,8 @@ class BotController:
         self._transition(BotState.STOPPED, "Controller stopped")
 
     async def _fetch_snapshot_with_retry(self) -> Snapshot | None:
-        """Read reader.js snapshot from the page with connection backoff."""
-        backoffs = [1.0, 2.0, 5.0, 10.0]
+        """Read reader.js snapshot from the page with connection backoff and reconnect."""
+        backoffs = self.backoffs
         reader_code = get_reader_js()
 
         for attempt, delay in enumerate(backoffs):
@@ -175,6 +208,16 @@ class BotController:
                     exc,
                     delay,
                 )
+                if self.reconnect_factory is not None:
+                    try:
+                        logger.info("Attempting CDP reconnect...")
+                        new_page, new_input = await self.reconnect_factory()
+                        self.page = new_page
+                        self.input_handler = new_input
+                        logger.info("Successfully reconnected to page and input handler")
+                    except Exception as rec_exc:
+                        logger.warning("Reconnect attempt failed: %s", rec_exc)
+
                 if attempt == len(backoffs) - 1:
                     self._transition(BotState.ERROR, f"CDP connection lost after retries: {exc}")
                     self._paused = True
@@ -191,6 +234,24 @@ class BotController:
             if self._paused:
                 await asyncio.sleep(0.2)
                 continue
+
+            # 0. Apply pending input mode change between turns
+            if self._pending_input_mode is not None:
+                new_mode = self._pending_input_mode
+                self._pending_input_mode = None
+                if new_mode != self._input_mode:
+                    old_handler = self.input_handler
+                    if new_mode == "cdp":
+                        self.input_handler = CDPInput(self.page)
+                    elif new_mode == "os":
+                        from chess_autoplayer.input.os_input import OSInput
+
+                        self.input_handler = OSInput(self.page)
+                    self._input_mode = new_mode
+                    try:
+                        await old_handler.close()
+                    except Exception as exc:
+                        logger.debug("Error closing old input handler: %s", exc)
 
             # 1. URL Guard check first
             current_url = await self.page.url()
@@ -209,21 +270,7 @@ class BotController:
                 await asyncio.sleep(0.25 + self.rng.uniform(-0.05, 0.05))
                 continue
 
-            # 3. Game Over check
-            if snapshot.game_over:
-                if self.state != BotState.GAME_OVER:
-                    text = snapshot.game_over_text or "Game Over"
-                    self._transition(BotState.GAME_OVER, text)
-                    self._emit(GameOverEvent(text=text))
-
-                # Check if a new game has reset the ply
-                if len(snapshot.moves) == 0 and not snapshot.game_over:
-                    self._last_seen_ply = -1
-                    self._transition(BotState.IDLE, "New game detected")
-                await asyncio.sleep(0.5)
-                continue
-
-            # 4. State reconstruction
+            # 3. State reconstruction
             try:
                 game_state = GameState.from_snapshot(snapshot, play_as=self.settings.play_as)
             except StateError as s_err:
@@ -231,10 +278,68 @@ class BotController:
                 await asyncio.sleep(0.25)
                 continue
 
+            # 4. Game Over latching and detection
+            is_game_finished = snapshot.game_over or game_state.board.is_game_over()
+            if is_game_finished and not self._game_over_latch:
+                self._game_over_latch = True
+                self._game_over_final_ply = game_state.ply
+                text = snapshot.game_over_text or ""
+                if not text:
+                    if game_state.board.is_checkmate():
+                        winner = "Black" if game_state.board.turn == chess.WHITE else "White"
+                        text = f"Checkmate - {winner} wins"
+                    elif game_state.board.is_stalemate():
+                        text = "Draw by stalemate"
+                    elif game_state.board.is_insufficient_material():
+                        text = "Draw by insufficient material"
+                    else:
+                        text = "Game Over"
+                self._transition(BotState.GAME_OVER, text)
+                self._emit(GameOverEvent(text=text))
+
+            if self._game_over_latch:
+                # Check for new game:
+                # - move list empty or shorter than at game end
+                # - ply lower than final ply
+                # - standard starting position
+                moves_reset = (
+                    len(snapshot.moves) < self._game_over_final_ply
+                    if self._game_over_final_ply >= 0
+                    else False
+                )
+                ply_reset = (
+                    game_state.ply < self._game_over_final_ply
+                    if self._game_over_final_ply >= 0
+                    else False
+                )
+                start_fen = game_state.board.fen().startswith(chess.STARTING_BOARD_FEN)
+
+                if (
+                    len(snapshot.moves) == 0
+                    or moves_reset
+                    or ply_reset
+                    or (start_fen and not is_game_finished)
+                ):
+                    logger.info("New game detected; resetting per-game state")
+                    self._game_over_latch = False
+                    self._game_over_final_ply = -1
+                    self._last_seen_ply = -1
+                    self._retry_count = 0
+                    self._override_style = None
+                    self._stable_fen_count = 0
+                    self._last_stable_fen = None
+                    self._stable_fen_time = 0.0
+                    self._pieces_source_start_time = None
+                    self._transition(BotState.IDLE, "New game detected")
+                else:
+                    if self.state != BotState.GAME_OVER:
+                        self._transition(BotState.GAME_OVER, "Game finished (waiting for new game)")
+                    await asyncio.sleep(0.5)
+                    continue
+
             # Record moves made by opponent
             if game_state.ply > self._last_seen_ply:
                 if self._last_seen_ply >= 0 and game_state.last_move:
-                    # Previous move was made
                     san = snapshot.moves[-1] if snapshot.moves else game_state.last_move.uci()
                     self._emit(
                         MoveEvent(
@@ -271,11 +376,11 @@ class BotController:
                 self._last_stable_fen = game_state.fen
                 self._stable_fen_time = time.monotonic()
                 self._stable_fen_count = 1
-                self._pieces_source_start_time = None
+                await asyncio.sleep(0.300)
+                continue
 
             if self._stable_fen_count < 2:
-                # Wait for stable second read
-                await asyncio.sleep(0.300)
+                await asyncio.sleep(0.1)
                 continue
 
             # 7. Trust check for pieces-only fallback
@@ -330,13 +435,23 @@ class BotController:
                 )
             )
 
-            # Wait remaining think time, polling page every 250ms for position change/pause
+            # Wait remaining think time, polling page and checking URL guard every 250ms
             remaining_wait = max(0.0, think_time - engine_time)
             wait_start = time.monotonic()
             move_abandoned = False
 
             while (time.monotonic() - wait_start) < remaining_wait:
                 if self._paused or self._stop_event.is_set():
+                    move_abandoned = True
+                    break
+
+                # Re-check URL guard during thinking wait
+                check_url = await self.page.url()
+                if not is_allowed_url(check_url):
+                    self._transition(
+                        BotState.BLOCKED_URL,
+                        f"Guard active: URL {check_url!r} is not an allowed computer play path",
+                    )
                     move_abandoned = True
                     break
 
@@ -361,7 +476,16 @@ class BotController:
             if move_abandoned or self._stop_event.is_set():
                 continue
 
-            # 9. MOVING state: execute move
+            # 9. Pre-move URL guard check immediately before move execution
+            pre_move_url = await self.page.url()
+            if not is_allowed_url(pre_move_url):
+                self._transition(
+                    BotState.BLOCKED_URL,
+                    f"Guard active: URL {pre_move_url!r} is not an allowed computer play path",
+                )
+                continue
+
+            # 10. MOVING state: execute move
             self._transition(BotState.MOVING, f"Playing move {move_san}")
             chosen_style = self._override_style or self._move_style
             self._override_style = None
@@ -383,11 +507,15 @@ class BotController:
                 await self.input_handler.perform_move(decision.move, ctx)
             except Exception as move_exc:
                 logger.warning("Move execution error: %s", move_exc)
+                try:
+                    await self.input_handler.close()
+                except Exception as rel_exc:
+                    logger.debug("Error releasing input on error: %s", rel_exc)
                 self._transition(BotState.ERROR, f"Input error: {move_exc}")
                 self._paused = True
                 continue
 
-            # 10. VERIFYING state: verify move landed within verify_timeout seconds
+            # 11. VERIFYING state: verify move landed within verify_timeout seconds
             self._transition(BotState.VERIFYING, f"Verifying {move_san}")
             verified = False
             ver_start = time.monotonic()
@@ -407,12 +535,39 @@ class BotController:
 
                 try:
                     ver_state = GameState.from_snapshot(ver_snap, play_as=self.settings.play_as)
-                    if ver_state.ply == game_state.ply + 1 and ver_state.last_move == decision.move:
-                        verified = True
-                        self._retry_count = 0
-                        self._last_seen_ply = ver_state.ply
-                        self._emit(MoveEvent(ply=ver_state.ply, san=move_san, by_bot=True))
-                        break
+                    clean_move_san = move_san.rstrip("+#")
+                    if ver_state.ply == game_state.ply + 1:
+                        matched = False
+                        if ver_state.last_move == decision.move:
+                            matched = True
+                        elif len(ver_snap.moves) > game_state.ply:
+                            if ver_snap.moves[game_state.ply].rstrip("+#") == clean_move_san:
+                                matched = True
+                        elif not ver_state.is_our_turn:
+                            matched = True
+                        if matched:
+                            verified = True
+                            self._retry_count = 0
+                            self._last_seen_ply = ver_state.ply
+                            self._emit(MoveEvent(ply=ver_state.ply, san=move_san, by_bot=True))
+                            break
+                    elif ver_state.ply >= game_state.ply + 2:
+                        # Opponent replied quickly: check if our move was at index game_state.ply
+                        matched = False
+                        if (
+                            len(ver_snap.moves) > game_state.ply
+                            and ver_snap.moves[game_state.ply].rstrip("+#") == clean_move_san
+                        ) or (
+                            len(ver_state.board.move_stack) > game_state.ply
+                            and ver_state.board.move_stack[game_state.ply] == decision.move
+                        ):
+                            matched = True
+                        if matched:
+                            verified = True
+                            self._retry_count = 0
+                            self._last_seen_ply = ver_state.ply
+                            self._emit(MoveEvent(ply=game_state.ply + 1, san=move_san, by_bot=True))
+                            break
                 except StateError:
                     continue
 
@@ -425,15 +580,62 @@ class BotController:
                             final_snap, play_as=self.settings.play_as
                         )
                         if final_state.is_our_turn and final_state.fen == game_state.fen:
-                            if self._retry_count == 0:
-                                self._retry_count += 1
-                                self._override_style = "click"
-                                logger.warning(
-                                    "Move %s did not register; retrying once with 'click' style",
-                                    move_san,
+                            # Re-check URL guard before immediate retry
+                            retry_url = await self.page.url()
+                            if not is_allowed_url(retry_url):
+                                self._transition(
+                                    BotState.BLOCKED_URL,
+                                    f"Guard active: URL {retry_url!r} not allowed",
                                 )
                                 continue
-                            else:
+
+                            # Immediate retry with 'click' style right away
+                            logger.warning(
+                                "Move %s did not register; retrying immediately with 'click' style",
+                                move_san,
+                            )
+                            retry_ctx = replace(ctx, style="click")
+                            try:
+                                await self.input_handler.perform_move(decision.move, retry_ctx)
+                            except Exception as retry_exc:
+                                logger.warning("Retry input error: %s", retry_exc)
+                                try:
+                                    await self.input_handler.close()
+                                except Exception:
+                                    pass
+                                self._transition(
+                                    BotState.ERROR, f"Input error on retry: {retry_exc}"
+                                )
+                                self._paused = True
+                                continue
+
+                            # Verify retry
+                            retry_ver_start = time.monotonic()
+                            retry_verified = False
+                            while (time.monotonic() - retry_ver_start) < self.verify_timeout:
+                                await asyncio.sleep(0.2)
+                                r_snap = await self._fetch_snapshot_with_retry()
+                                if r_snap is None or not r_snap.found:
+                                    continue
+                                try:
+                                    r_state = GameState.from_snapshot(
+                                        r_snap, play_as=self.settings.play_as
+                                    )
+                                    if r_state.ply >= game_state.ply + 1:
+                                        retry_verified = True
+                                        self._last_seen_ply = r_state.ply
+                                        self._emit(
+                                            MoveEvent(
+                                                ply=game_state.ply + 1,
+                                                san=move_san,
+                                                by_bot=True,
+                                            )
+                                        )
+                                        break
+                                except StateError:
+                                    continue
+
+                            if not retry_verified:
                                 msg = f"Move {move_san} failed to register after retry"
                                 self._transition(BotState.ERROR, msg)
                                 self._emit(ErrorEvent(msg))
