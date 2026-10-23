@@ -28,7 +28,8 @@ def is_allowed_url(url: str) -> bool:
         return False
     try:
         parts = urlsplit(url)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Failed to parse URL %r: %s", url, exc)
         return False
 
     if parts.scheme != "https":

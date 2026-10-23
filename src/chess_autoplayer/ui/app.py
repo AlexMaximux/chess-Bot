@@ -69,6 +69,8 @@ class AutoplayerApp:
         self._tally = SessionTally()
         self._current_state = BotState.STOPPED
         self._last_our_color = self.settings.play_as
+        self._speed_save_after_id: str | None = None
+        self._last_applied_speed: float = self.settings.speed
 
         # Build UI layout
         self._setup_window()
@@ -315,7 +317,14 @@ class AutoplayerApp:
             self._update_status(event.state, event.message)
             if event.state == BotState.PAUSED:
                 self.btn_pause.config(text="Resume")
-            elif event.state in (BotState.THINKING, BotState.MOVING, BotState.OPPONENT_TURN):
+            elif event.state == BotState.ERROR:
+                self.btn_pause.config(text="Resume")
+            elif event.state in (
+                BotState.THINKING,
+                BotState.MOVING,
+                BotState.OPPONENT_TURN,
+                BotState.IDLE,
+            ):
                 self.btn_pause.config(text="Pause")
 
         elif isinstance(event, DecisionEvent):
@@ -344,6 +353,7 @@ class AutoplayerApp:
 
         elif isinstance(event, ErrorEvent):
             self._update_status(BotState.ERROR, event.message)
+            self.btn_pause.config(text="Resume")
 
     def _on_open_chrome(self) -> None:
         """Launch or focus Chrome and navigate to the computer play tab."""
@@ -433,11 +443,11 @@ class AutoplayerApp:
         if self._controller is None:
             return
 
-        if self._current_state == BotState.PAUSED:
-            self._controller.resume()
+        if self._controller.is_paused:
+            self._loop.call_soon_threadsafe(self._controller.resume)
             self.btn_pause.config(text="Pause")
         else:
-            self._controller.pause()
+            self._loop.call_soon_threadsafe(self._controller.pause)
             self.btn_pause.config(text="Resume")
 
     def _on_stop(self) -> None:
@@ -483,18 +493,29 @@ class AutoplayerApp:
             self.settings = replace(self.settings, strength=val)
             save_config(self.settings)
             if self._controller is not None:
-                self._controller.set_strength(val)
+                self._loop.call_soon_threadsafe(self._controller.set_strength, val)
 
     def _on_speed_changed(self, val_str: str) -> None:
         try:
             val = round(float(val_str), 1)
             self.speed_val_label.config(text=f"{val:.1f}x")
-            self.settings = replace(self.settings, speed=val)
-            save_config(self.settings)
-            if self._controller is not None:
-                self._controller.set_speed(val)
+            if self._last_applied_speed != val:
+                self._last_applied_speed = val
+                if self._controller is not None:
+                    self._loop.call_soon_threadsafe(self._controller.set_speed, val)
+            self._schedule_debounced_save_speed(val)
         except ValueError:
             pass
+
+    def _schedule_debounced_save_speed(self, speed: float) -> None:
+        if self._speed_save_after_id is not None:
+            self.root.after_cancel(self._speed_save_after_id)
+        self._speed_save_after_id = self.root.after(500, self._save_debounced_speed, speed)
+
+    def _save_debounced_speed(self, speed: float) -> None:
+        self._speed_save_after_id = None
+        self.settings = replace(self.settings, speed=speed)
+        save_config(self.settings)
 
     def _on_input_mode_changed(self) -> None:
         mode = self.input_mode_var.get()
@@ -508,13 +529,15 @@ class AutoplayerApp:
         self.settings = replace(self.settings, input_mode=mode)
         save_config(self.settings)
         if self._controller is not None:
-            self._controller.set_input_mode(mode)
+            self._loop.call_soon_threadsafe(self._controller.set_input_mode, mode)
 
     def _on_style_changed(self, event: Any = None) -> None:
         st = self.style_var.get()
         if st in ("mixed", "drag", "click"):
             self.settings = replace(self.settings, move_style=st)
             save_config(self.settings)
+            if self._controller is not None:
+                self._loop.call_soon_threadsafe(self._controller.set_move_style, st)
 
     def _on_smoke_exit(self) -> None:
         """Smoke test exit handler."""
@@ -523,12 +546,17 @@ class AutoplayerApp:
 
     def _on_close(self) -> None:
         """Gracefully handle window close event."""
+        if self._speed_save_after_id is not None:
+            self.root.after_cancel(self._speed_save_after_id)
+            self._speed_save_after_id = None
+            save_config(self.settings)
+
         # Stop controller on worker thread
         fut = asyncio.run_coroutine_threadsafe(self._async_stop(), self._loop)
         try:
             fut.result(timeout=1.5)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Exception waiting for async shutdown: %s", exc)
 
         # Stop worker thread loop
         self._loop.call_soon_threadsafe(self._loop.stop)

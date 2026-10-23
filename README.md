@@ -80,7 +80,7 @@ or double-click the **`Chess Autoplayer.command`** launcher in the project root 
 
 Starting with **Chrome 136+**, Google Chrome strictly blocks remote debugging flags (`--remote-debugging-port`) when attached to the default user profile directory. To prevent security conflicts and tab collisions:
 
-1. Chess Autoplayer launches an isolated instance of Chrome using a dedicated profile folder at `~/.config/chess-autoplayer/chrome-profile`.
+1. Chess Autoplayer launches an isolated instance of Chrome using a dedicated profile folder at `~/.chess-autoplayer/chrome-profile`.
 2. Chrome is started with remote debugging on port `9333`.
 3. If you wish to play as a logged-in user, open Chrome via the **Open Chrome** button in the control panel and log in once. Your cookies and session will persist in the dedicated profile.
 4. Closing the bot or control panel **does not** close your Chrome browser—your open tabs remain intact.
@@ -216,7 +216,7 @@ To use **Real Mouse (OS)** input mode, macOS requires Accessibility permissions 
   ```bash
   brew install stockfish
   ```
-  Or specify the path in `~/.config/chess-autoplayer/config.json`:
+  Or specify the path in `~/.chess-autoplayer/config.json`:
   ```json
   {
     "stockfish_path": "/opt/homebrew/bin/stockfish"
@@ -290,6 +290,7 @@ uv run chess-autoplayer gui --smoke 3
 
 ## Configuration & Log Locations
 
-- **Configuration File**: `~/.config/chess-autoplayer/config.json`
-- **Chrome Debug Profile**: `~/.config/chess-autoplayer/chrome-profile`
+- **Configuration File**: `~/.chess-autoplayer/config.json`
+- **Chrome Debug Profile**: `~/.chess-autoplayer/chrome-profile`
+- **Application Logs**: `~/.chess-autoplayer/logs/`
 - **Live Run Logs**: `docs/live-runs/`

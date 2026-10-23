@@ -68,6 +68,9 @@ class BotController:
         self._move_style = settings.move_style
         self._input_mode = settings.input_mode
         self._pending_input_mode: str | None = None
+        self._pending_move_style: str | None = None
+        self._pending_strength: str | None = None
+        self._is_searching: bool = False
 
         # Stabilization state
         self._last_stable_fen: str | None = None
@@ -86,12 +89,21 @@ class BotController:
         self.backoffs: list[float] = [1.0, 2.0, 5.0, 10.0]
 
     @property
+    def is_paused(self) -> bool:
+        """True if playback is currently paused (either manually or after error)."""
+        return self._paused
+
+    @property
     def strength(self) -> str:
         return self._strength
 
     @property
     def speed(self) -> float:
         return self._speed
+
+    @property
+    def move_style(self) -> str:
+        return self._move_style
 
     @property
     def input_mode(self) -> str:
@@ -139,14 +151,32 @@ class BotController:
         self._transition(BotState.IDLE, "Resumed by user")
 
     def set_strength(self, strength: str) -> None:
-        """Update strength profile name."""
+        """Update strength profile name.
+
+        Applied between engine searches to prevent race conditions on the UCI pipe.
+        """
         if strength not in PROFILES:
             msg = f"Unknown strength profile: {strength!r}"
             logger.warning(msg)
             self._emit(ErrorEvent(msg))
             return
         self._strength = strength
-        self.engine.set_profile(strength)
+        self._pending_strength = strength
+        if not self._is_searching:
+            try:
+                self.engine.set_profile(strength)
+                self._pending_strength = None
+            except Exception as exc:
+                logger.warning("Error setting engine profile: %s", exc)
+
+    def set_move_style(self, style: str) -> None:
+        """Schedule move style change ('mixed', 'drag', 'click') from the next move."""
+        if style not in ("mixed", "drag", "click"):
+            msg = f"Invalid move style: {style!r}"
+            logger.warning(msg)
+            self._emit(ErrorEvent(msg))
+            return
+        self._pending_move_style = style
 
     def set_speed(self, speed: float) -> None:
         """Update speed multiplier."""
@@ -208,13 +238,37 @@ class BotController:
                     exc,
                     delay,
                 )
-                if self.reconnect_factory is not None:
+                if isinstance(exc, ConnectionLost) and self.reconnect_factory is not None:
                     try:
                         logger.info("Attempting CDP reconnect...")
+                        old_cdp = getattr(self.page, "cdp", None)
+                        old_input = self.input_handler
                         new_page, new_input = await self.reconnect_factory()
                         self.page = new_page
                         self.input_handler = new_input
+                        if old_cdp is not None and old_cdp is not getattr(new_page, "cdp", None):
+                            try:
+                                await old_cdp.close()
+                            except Exception as cdp_err:
+                                logger.debug(
+                                    "Error closing old CDP client after reconnect: %s", cdp_err
+                                )
+                        if old_input is not None and old_input is not new_input:
+                            try:
+                                await old_input.close()
+                            except Exception as inp_err:
+                                logger.debug(
+                                    "Error closing old input handler after reconnect: %s", inp_err
+                                )
                         logger.info("Successfully reconnected to page and input handler")
+                        try:
+                            raw = await self.page.evaluate_json(reader_code, timeout=5.0)
+                            if isinstance(raw, dict):
+                                return parse_snapshot(raw)
+                        except Exception as post_rec_err:
+                            logger.warning(
+                                "Read immediately after reconnect failed: %s", post_rec_err
+                            )
                     except Exception as rec_exc:
                         logger.warning("Reconnect attempt failed: %s", rec_exc)
 
@@ -235,7 +289,19 @@ class BotController:
                 await asyncio.sleep(0.2)
                 continue
 
-            # 0. Apply pending input mode change between turns
+            # 0. Apply pending strength, move style, and input mode changes between turns
+            if self._pending_strength is not None and not self._is_searching:
+                strength_to_apply = self._pending_strength
+                self._pending_strength = None
+                try:
+                    self.engine.set_profile(strength_to_apply)
+                except Exception as eng_exc:
+                    logger.warning("Error updating engine profile: %s", eng_exc)
+
+            if self._pending_move_style is not None:
+                self._move_style = self._pending_move_style
+                self._pending_move_style = None
+
             if self._pending_input_mode is not None:
                 new_mode = self._pending_input_mode
                 self._pending_input_mode = None
@@ -401,12 +467,33 @@ class BotController:
                     )
 
             # 8. THINKING state: run engine in thread, calculate human think time
+            if self._pending_strength is not None:
+                strength_to_apply = self._pending_strength
+                self._pending_strength = None
+                try:
+                    self.engine.set_profile(strength_to_apply)
+                except Exception as eng_exc:
+                    logger.warning("Error updating engine profile before search: %s", eng_exc)
+
             self._transition(BotState.THINKING, f"Thinking on ply {game_state.ply}")
             profile = get_profile(self._strength)
 
             t0 = time.monotonic()
-            lines = await asyncio.to_thread(self.engine.analyse, game_state.board)
+            self._is_searching = True
+            try:
+                lines = await asyncio.to_thread(self.engine.analyse, game_state.board)
+            finally:
+                self._is_searching = False
             engine_time = time.monotonic() - t0
+
+            # Apply pending strength profile if one was requested during search
+            if self._pending_strength is not None:
+                strength_to_apply = self._pending_strength
+                self._pending_strength = None
+                try:
+                    self.engine.set_profile(strength_to_apply)
+                except Exception as eng_exc:
+                    logger.warning("Error updating engine profile after search: %s", eng_exc)
 
             if not lines:
                 self._transition(BotState.ERROR, "Engine produced no candidate lines")
@@ -536,40 +623,57 @@ class BotController:
                 try:
                     ver_state = GameState.from_snapshot(ver_snap, play_as=self.settings.play_as)
                     clean_move_san = move_san.rstrip("+#")
-                    if ver_state.ply == game_state.ply + 1:
+                    if ver_state.ply >= game_state.ply + 1:
                         matched = False
-                        if ver_state.last_move == decision.move:
-                            matched = True
-                        elif len(ver_snap.moves) > game_state.ply:
-                            if ver_snap.moves[game_state.ply].rstrip("+#") == clean_move_san:
+                        landed_desc: str = ""
+
+                        # 1. Check reconstructed move stack at index game_state.ply
+                        if len(ver_state.board.move_stack) > game_state.ply:
+                            stack_move = ver_state.board.move_stack[game_state.ply]
+                            if stack_move == decision.move:
                                 matched = True
-                        elif not ver_state.is_our_turn:
-                            matched = True
-                        if matched:
-                            verified = True
-                            self._retry_count = 0
-                            self._last_seen_ply = ver_state.ply
-                            self._emit(MoveEvent(ply=ver_state.ply, san=move_san, by_bot=True))
-                            break
-                    elif ver_state.ply >= game_state.ply + 2:
-                        # Opponent replied quickly: check if our move was at index game_state.ply
-                        matched = False
+                            else:
+                                landed_desc = stack_move.uci()
+
+                        # 2. Check moves list SAN at index game_state.ply
+                        if not matched and len(ver_snap.moves) > game_state.ply:
+                            san_move = ver_snap.moves[game_state.ply]
+                            if san_move.rstrip("+#") == clean_move_san:
+                                matched = True
+                            elif not landed_desc:
+                                landed_desc = san_move
+
+                        # 3. Check last_move if exact ply+1
                         if (
-                            len(ver_snap.moves) > game_state.ply
-                            and ver_snap.moves[game_state.ply].rstrip("+#") == clean_move_san
-                        ) or (
-                            len(ver_state.board.move_stack) > game_state.ply
-                            and ver_state.board.move_stack[game_state.ply] == decision.move
+                            not matched
+                            and ver_state.ply == game_state.ply + 1
+                            and ver_state.last_move is not None
                         ):
-                            matched = True
+                            if ver_state.last_move == decision.move:
+                                matched = True
+                            elif not landed_desc:
+                                landed_desc = ver_state.last_move.uci()
+
                         if matched:
                             verified = True
                             self._retry_count = 0
                             self._last_seen_ply = ver_state.ply
                             self._emit(MoveEvent(ply=game_state.ply + 1, san=move_san, by_bot=True))
                             break
+                        else:
+                            # A different move landed on the board!
+                            landed = landed_desc or "unknown"
+                            err_msg = f"unexpected move landed: {landed} (expected {move_san})"
+                            logger.error(err_msg)
+                            self._transition(BotState.ERROR, err_msg)
+                            self._emit(ErrorEvent(err_msg))
+                            self._paused = True
+                            break
                 except StateError:
                     continue
+
+            if self._paused or self._stop_event.is_set():
+                continue
 
             if not verified:
                 # Re-read state
@@ -601,8 +705,10 @@ class BotController:
                                 logger.warning("Retry input error: %s", retry_exc)
                                 try:
                                     await self.input_handler.close()
-                                except Exception:
-                                    pass
+                                except Exception as exc:
+                                    logger.debug(
+                                        "Error closing input handler during retry: %s", exc
+                                    )
                                 self._transition(
                                     BotState.ERROR, f"Input error on retry: {retry_exc}"
                                 )
@@ -612,6 +718,7 @@ class BotController:
                             # Verify retry
                             retry_ver_start = time.monotonic()
                             retry_verified = False
+                            clean_move_san = move_san.rstrip("+#")
                             while (time.monotonic() - retry_ver_start) < self.verify_timeout:
                                 await asyncio.sleep(0.2)
                                 r_snap = await self._fetch_snapshot_with_retry()
@@ -622,18 +729,59 @@ class BotController:
                                         r_snap, play_as=self.settings.play_as
                                     )
                                     if r_state.ply >= game_state.ply + 1:
-                                        retry_verified = True
-                                        self._last_seen_ply = r_state.ply
-                                        self._emit(
-                                            MoveEvent(
-                                                ply=game_state.ply + 1,
-                                                san=move_san,
-                                                by_bot=True,
+                                        r_matched = False
+                                        r_landed: str = ""
+                                        if len(r_state.board.move_stack) > game_state.ply:
+                                            r_sm = r_state.board.move_stack[game_state.ply]
+                                            if r_sm == decision.move:
+                                                r_matched = True
+                                            else:
+                                                r_landed = r_sm.uci()
+
+                                        if not r_matched and len(r_snap.moves) > game_state.ply:
+                                            r_m = r_snap.moves[game_state.ply]
+                                            if r_m.rstrip("+#") == clean_move_san:
+                                                r_matched = True
+                                            elif not r_landed:
+                                                r_landed = r_m
+
+                                        if (
+                                            not r_matched
+                                            and r_state.ply == game_state.ply + 1
+                                            and r_state.last_move is not None
+                                        ):
+                                            if r_state.last_move == decision.move:
+                                                r_matched = True
+                                            elif not r_landed:
+                                                r_landed = r_state.last_move.uci()
+
+                                        if r_matched:
+                                            retry_verified = True
+                                            self._last_seen_ply = r_state.ply
+                                            self._emit(
+                                                MoveEvent(
+                                                    ply=game_state.ply + 1,
+                                                    san=move_san,
+                                                    by_bot=True,
+                                                )
                                             )
-                                        )
-                                        break
+                                            break
+                                        else:
+                                            landed = r_landed or "unknown"
+                                            err_msg = (
+                                                f"unexpected move landed: {landed} "
+                                                f"(expected {move_san})"
+                                            )
+                                            logger.error(err_msg)
+                                            self._transition(BotState.ERROR, err_msg)
+                                            self._emit(ErrorEvent(err_msg))
+                                            self._paused = True
+                                            break
                                 except StateError:
                                     continue
+
+                            if self._paused or self._stop_event.is_set():
+                                continue
 
                             if not retry_verified:
                                 msg = f"Move {move_san} failed to register after retry"

@@ -1,6 +1,7 @@
 """Tests for BotController async state machine using fake page, engine, and input."""
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import patch
 
@@ -102,11 +103,15 @@ class FakeEngine:
     def __init__(self, candidate_move: chess.Move | None = None) -> None:
         self.candidate_move = candidate_move or chess.Move.from_uci("e2e4")
         self.analyse_count = 0
+        self.profiles_set: list[str] = []
 
     def analyse(self, board: chess.Board) -> list[Line]:
         self.analyse_count += 1
         mv = self.candidate_move
         return [Line(move=mv, score_cp=50, mate_score=None, pv=[mv])]
+
+    def set_profile(self, profile: str) -> None:
+        self.profiles_set.append(profile)
 
     def start(self) -> None:
         pass
@@ -638,3 +643,206 @@ async def test_verification_retry_plays_same_move_with_click_no_extra_engine_cal
     assert fake_input.performed_moves[1][0] == chess.Move.from_uci("e2e4")
     # Crucial: Engine was only called ONCE!
     assert engine.analyse_count == 1
+
+
+@pytest.mark.asyncio
+async def test_set_strength_during_search_applies_after_search() -> None:
+    page = FakePage()
+    s_start1 = make_raw_snapshot()
+    s_start2 = make_raw_snapshot()
+    page.snapshots = [s_start1, s_start2]
+
+    in_analyse_event = asyncio.Event()
+    release_analyse_event = asyncio.Event()
+
+    class BlockingEngine(FakeEngine):
+        def analyse(self, board: chess.Board) -> list[Line]:
+            self.analyse_count += 1
+            # Signal we are inside analyse
+            in_analyse_event.set()
+            # Wait until released
+            while not release_analyse_event.is_set():
+                time.sleep(0.01)
+            mv = self.candidate_move
+            return [Line(move=mv, score_cp=50, mate_score=None, pv=[mv])]
+
+    engine = BlockingEngine()
+    fake_input = FakeInput()
+    events: list[BotEvent] = []
+
+    controller = BotController(
+        page=page,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
+        input_handler=fake_input,
+        settings=Settings(strength="casual", speed=50.0),
+        event_callback=events.append,
+    )
+
+    await controller.start()
+    # Wait until engine.analyse is running in the worker thread
+    await asyncio.wait_for(in_analyse_event.wait(), timeout=2.0)
+    assert controller.state == BotState.THINKING
+    assert controller._is_searching is True
+
+    # Call set_strength while search is in progress
+    controller.set_strength("club")
+    assert controller.strength == "club"
+    assert controller._pending_strength == "club"
+    # Crucial: engine.set_profile("club") must NOT have been called yet!
+    assert "club" not in engine.profiles_set
+
+    # Release engine search
+    release_analyse_event.set()
+    # Wait briefly for search to finish and move to proceed
+    await asyncio.sleep(0.3)
+    await controller.stop()
+
+    # Now engine.set_profile("club") MUST have been called after search
+    assert "club" in engine.profiles_set
+
+
+@pytest.mark.asyncio
+async def test_resume_from_error_state() -> None:
+    page = FakePage()
+    engine = FakeEngine()
+    fake_input = FakeInput()
+    events: list[BotEvent] = []
+
+    controller = BotController(
+        page=page,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
+        input_handler=fake_input,
+        settings=Settings(),
+        event_callback=events.append,
+    )
+
+    # Force into error state
+    controller._transition(BotState.ERROR, "Unexpected error occurred")
+    controller._paused = True
+
+    assert controller.state == BotState.ERROR
+    assert controller.is_paused is True
+
+    # Resuming from error transitions to IDLE and unpauses
+    controller.resume()
+    assert controller.is_paused is False
+    assert controller.state == BotState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_set_move_style_validation_and_next_move_application() -> None:
+    page = FakePage()
+    engine = FakeEngine()
+    fake_input = FakeInput()
+    events: list[BotEvent] = []
+
+    controller = BotController(
+        page=page,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
+        input_handler=fake_input,
+        settings=Settings(move_style="drag", speed=50.0),
+        event_callback=events.append,
+    )
+
+    # Invalid move style emits ErrorEvent
+    controller.set_move_style("teleport")
+    assert controller.move_style == "drag"
+    assert controller._pending_move_style is None
+    assert any(isinstance(e, ErrorEvent) and "Invalid move style" in e.message for e in events)
+
+    # Valid move style sets pending style
+    controller.set_move_style("click")
+    assert controller._pending_move_style == "click"
+
+    # Start loop and execute one move
+    s_start1 = make_raw_snapshot()
+    s_start2 = make_raw_snapshot()
+    s_moved = make_raw_snapshot(moves=["e4"])
+    page.snapshots = [s_start1, s_start2]
+    fake_input.on_move = lambda: page.set_default_snapshot(s_moved)
+
+    await controller.start()
+    await asyncio.sleep(1.0)
+    await controller.stop()
+
+    assert controller.move_style == "click"
+    assert len(fake_input.performed_moves) >= 1
+    assert fake_input.performed_moves[0][1].style == "click"
+
+
+@pytest.mark.asyncio
+async def test_verification_rejects_unexpected_move_and_pauses() -> None:
+    page = FakePage()
+    s_start1 = make_raw_snapshot()
+    s_start2 = make_raw_snapshot()
+    # Bot intends e2e4, but a DIFFERENT move (d2d4) landed on the board!
+    s_wrong_move = make_raw_snapshot(
+        fen="rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1",
+        moves=["d4"],
+    )
+    page.snapshots = [s_start1, s_start2]
+
+    engine = FakeEngine(candidate_move=chess.Move.from_uci("e2e4"))
+    fake_input = FakeInput(on_move=lambda: page.set_default_snapshot(s_wrong_move))
+    events: list[BotEvent] = []
+
+    controller = BotController(
+        page=page,  # type: ignore[arg-type]
+        engine=engine,  # type: ignore[arg-type]
+        input_handler=fake_input,
+        settings=Settings(speed=50.0),
+        event_callback=events.append,
+    )
+    controller.verify_timeout = 0.5
+
+    await controller.start()
+    await asyncio.sleep(1.0)
+
+    # Bot must have caught the unexpected move, emitted ErrorEvent, and paused!
+    assert controller.state == BotState.ERROR
+    assert controller.is_paused is True
+    err_events = [e for e in events if isinstance(e, ErrorEvent)]
+    assert len(err_events) >= 1
+    assert "unexpected move landed: d2d4 (expected e4)" in err_events[0].message
+
+    await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_succeeds_on_final_attempt_does_not_error() -> None:
+    page1 = FakePage()
+    # 4 consecutive ConnectionLost errors
+    page1.snapshots = [
+        ConnectionLost("conn lost 1"),
+        ConnectionLost("conn lost 2"),
+        ConnectionLost("conn lost 3"),
+        ConnectionLost("conn lost 4"),
+    ]  # type: ignore[list-item]
+
+    page2 = FakePage()
+    s_good = make_raw_snapshot()
+    page2.snapshots = [s_good]
+
+    reconnect_attempts = 0
+
+    async def fake_reconnect() -> tuple[Any, Any]:
+        nonlocal reconnect_attempts
+        reconnect_attempts += 1
+        return page2, FakeInput()
+
+    controller = BotController(
+        page=page1,  # type: ignore[arg-type]
+        engine=FakeEngine(),  # type: ignore[arg-type]
+        input_handler=FakeInput(),
+        settings=Settings(),
+        reconnect_factory=fake_reconnect,
+    )
+    controller.backoffs = [0.01, 0.01, 0.01, 0.01]
+
+    snap = await controller._fetch_snapshot_with_retry()
+
+    assert snap is not None
+    assert snap.found is True
+    assert controller.state != BotState.ERROR
+    assert controller.is_paused is False
+    assert reconnect_attempts >= 1
