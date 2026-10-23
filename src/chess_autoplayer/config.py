@@ -14,6 +14,7 @@ DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
 VALID_INPUT_MODES = {"cdp", "os"}
 VALID_MOVE_STYLES = {"drag", "click", "mixed"}
 VALID_PLAY_AS = {"auto", "white", "black"}
+VALID_STRENGTHS = {"beginner", "casual", "club", "strong", "master", "max"}
 
 
 class ConfigError(Exception):
@@ -30,6 +31,7 @@ class Settings:
     debug_port: int = 9333
     start_url: str = "https://www.chess.com/play/computer"
     strength: str = "club"
+    speed: float = 1.0
     input_mode: str = "cdp"
     move_style: str = "mixed"
     play_as: str = "auto"
@@ -86,7 +88,20 @@ def _validate_raw_config(data: dict[str, Any]) -> dict[str, Any]:
                 f"Invalid play_as: {play_as!r}. Must be one of {sorted(VALID_PLAY_AS)}."
             )
 
-    for str_field in ("chrome_path", "stockfish_path", "profile_dir", "start_url", "strength"):
+    if "strength" in cleaned:
+        strength = cleaned["strength"]
+        if strength not in VALID_STRENGTHS:
+            raise ConfigError(
+                f"Invalid strength: {strength!r}. Must be one of {sorted(VALID_STRENGTHS)}."
+            )
+
+    if "speed" in cleaned:
+        speed = cleaned["speed"]
+        if not isinstance(speed, (int, float)) or isinstance(speed, bool) or speed <= 0:
+            raise ConfigError(f"Invalid speed: {speed!r}. Must be a positive number.")
+        cleaned["speed"] = float(speed)
+
+    for str_field in ("chrome_path", "stockfish_path", "profile_dir", "start_url"):
         if str_field in cleaned:
             val = cleaned[str_field]
             if not isinstance(val, str) or not val.strip():

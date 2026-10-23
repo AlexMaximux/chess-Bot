@@ -70,6 +70,20 @@ def test_invalid_values_raise_config_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="play_as"):
         load_config(config_path=cfg_file)
 
+    # Invalid strength
+    cfg_file.write_text(json.dumps({"strength": "superhuman"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="strength"):
+        load_config(config_path=cfg_file)
+
+    # Invalid speed
+    cfg_file.write_text(json.dumps({"speed": -0.5}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="speed"):
+        load_config(config_path=cfg_file)
+
+    cfg_file.write_text(json.dumps({"speed": "fast"}), encoding="utf-8")
+    with pytest.raises(ConfigError, match="speed"):
+        load_config(config_path=cfg_file)
+
     # Malformed JSON
     cfg_file.write_text("{not valid json", encoding="utf-8")
     with pytest.raises(ConfigError, match="Failed to parse"):
