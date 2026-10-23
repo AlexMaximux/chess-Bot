@@ -105,11 +105,11 @@ def test_cli_run_help() -> None:
     assert "--style" in res.stdout
 
 
-def test_cli_gui_placeholder() -> None:
+def test_cli_gui_smoke() -> None:
     res = subprocess.run(
-        [sys.executable, "-m", "chess_autoplayer", "gui"],
+        [sys.executable, "-m", "chess_autoplayer", "gui", "--smoke", "1"],
         capture_output=True,
         text=True,
         check=True,
     )
-    assert "not implemented yet" in res.stdout
+    assert res.returncode == 0

@@ -422,7 +422,7 @@ def main() -> None:
         prog="chess-autoplayer",
         description="Autonomous chess player driving real Google Chrome on chess.com against bots",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     # probe subcommand
     probe_parser = subparsers.add_parser(
@@ -511,8 +511,15 @@ def main() -> None:
         "-v", "--verbose", action="store_true", help="Enable verbose debug logging"
     )
 
-    # gui subcommand (placeholder for brief 04)
-    subparsers.add_parser("gui", help="Launch Tkinter desktop GUI (brief 04)")
+    # gui subcommand
+    gui_parser = subparsers.add_parser("gui", help="Launch Tkinter desktop GUI control panel")
+    gui_parser.add_argument(
+        "--smoke",
+        type=float,
+        default=None,
+        metavar="N",
+        help="Run for N seconds and exit cleanly (smoke test)",
+    )
 
     args = parser.parse_args()
 
@@ -542,9 +549,12 @@ def main() -> None:
             )
         )
         sys.exit(exit_code)
-    elif args.command == "gui":
-        print("Subcommand 'gui' is not implemented yet (scheduled for brief 04).")
-        sys.exit(0)
+    elif args.command is None or args.command == "gui":
+        from chess_autoplayer.ui.app import run_app
+
+        smoke = getattr(args, "smoke", None)
+        exit_code = run_app(smoke_seconds=smoke)
+        sys.exit(exit_code)
     else:
         parser.print_help()
         sys.exit(1)
