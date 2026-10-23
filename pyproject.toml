@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "chess-autoplayer"
+version = "0.1.0"
+description = "Autonomous chess player driving real Google Chrome on chess.com against bots"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "chess>=1.10.0",
+    "websockets>=13.0",
+]
+
+[project.scripts]
+chess-autoplayer = "chess_autoplayer.__main__:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10.0",
+    "pytest>=8.0.0",
+    "ruff>=0.6.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chess_autoplayer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "C4"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
